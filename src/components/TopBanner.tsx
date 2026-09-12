@@ -24,15 +24,15 @@ export const TopBanner: React.FC = () => {
   const format = (n: number) => n.toString().padStart(2, '0');
 
   return (
-    <div id="top-announcement" className="bg-[#0e4d6e]/90 backdrop-blur-md text-[#c8eaff] py-2 border-b border-[#7dd3fc]/20 text-xs sm:text-sm font-medium shadow-[0_1px_8px_rgba(0,0,0,0.15)]">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 mx-auto sm:mx-0">
-          <Sparkles className="w-4 h-4 text-[#7dd3fc] animate-pulse" />
-          <span>✨ عرض خاص لفترة محدودة: توصيل مجاني لـ 58 ولاية + الدفع عند الاستلام</span>
-          <Truck className="w-4 h-4 text-[#7dd3fc] hidden sm:inline" />
+    <div id="top-announcement" className="w-full bg-[#0e4d6e]/90 backdrop-blur-md text-[#c8eaff] py-2 border-b border-[#7dd3fc]/20 text-xs sm:text-sm font-medium shadow-[0_1px_8px_rgba(0,0,0,0.15)] overflow-hidden">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 flex items-center justify-center sm:justify-between gap-2 text-center sm:text-right">
+        <div className="flex items-center justify-center gap-1.5 sm:gap-2 mx-auto sm:mx-0 text-[11px] sm:text-xs md:text-sm">
+          <Sparkles className="w-3.5 h-3.5 text-[#7dd3fc] animate-pulse shrink-0" />
+          <span className="leading-tight">عرض خاص لفترة محدودة: توصيل مجاني لـ 58 ولاية + الدفع عند الاستلام</span>
+          <Truck className="w-4 h-4 text-[#7dd3fc] hidden sm:inline shrink-0" />
         </div>
 
-        <div className="hidden md:flex items-center gap-2 text-[11px] bg-[#0a1e2f]/80 px-3 py-0.5 rounded-full border border-[#7dd3fc]/30">
+        <div className="hidden md:flex items-center gap-2 text-[11px] bg-[#0a1e2f]/80 px-3 py-0.5 rounded-full border border-[#7dd3fc]/30 shrink-0">
           <Clock className="w-3.5 h-3.5 text-[#7dd3fc]" />
           <span>ينتهي العرض خلال:</span>
           <span className="font-mono font-bold text-[#7dd3fc] dir-ltr">

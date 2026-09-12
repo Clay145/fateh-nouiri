@@ -30,8 +30,8 @@ export const ProblemSection: React.FC = () => {
   ];
 
   return (
-    <section id="problems-section" className="py-16 sm:py-20 px-4 sm:px-6 lg:px-12 max-w-7xl mx-auto w-full">
-      <div className="text-center max-w-2xl mx-auto mb-12 space-y-3">
+    <section id="problems-section" className="py-12 sm:py-20 px-4 sm:px-6 lg:px-12 max-w-7xl mx-auto w-full overflow-hidden">
+      <div className="text-center max-w-2xl mx-auto mb-10 sm:mb-12 space-y-3">
         <div className="inline-flex items-center gap-1.5 text-xs font-bold text-[#ff6b6b] uppercase tracking-wider bg-[#3d1414]/60 px-3.5 py-1 rounded-full border border-[#ff6b6b]/30">
           <AlertTriangle className="w-3.5 h-3.5 text-[#ff6b6b]" />
           <span>الواقع اليومي المؤلم</span>

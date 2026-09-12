@@ -87,20 +87,20 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
   };
 
   return (
-    <section id="order-form" className="py-16 sm:py-24 px-4 sm:px-6 lg:px-12 max-w-5xl mx-auto w-full">
-      <div className="bg-[#141c2e]/80 backdrop-blur-2xl border-2 border-[#7dd3fc]/30 rounded-3xl p-6 sm:p-10 lg:p-12 shadow-[0_0_60px_rgba(125,211,252,0.15)] relative overflow-hidden">
+    <section id="order-form" className="py-12 sm:py-24 px-4 sm:px-6 lg:px-12 max-w-5xl mx-auto w-full overflow-hidden">
+      <div className="bg-[#141c2e]/80 backdrop-blur-2xl border-2 border-[#7dd3fc]/30 rounded-3xl p-4 sm:p-10 lg:p-12 shadow-[0_0_60px_rgba(125,211,252,0.15)] relative overflow-hidden">
         {/* Accent Glow Corner */}
-        <div className="absolute -top-24 -right-24 w-60 h-60 bg-[#7dd3fc]/20 rounded-full blur-3xl pointer-events-none"></div>
-        <div className="absolute -bottom-24 -left-24 w-60 h-60 bg-[#c8a0f0]/15 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="absolute -top-24 -right-24 w-60 h-60 bg-[#7dd3fc]/20 rounded-full blur-3xl pointer-events-none max-w-full"></div>
+        <div className="absolute -bottom-24 -left-24 w-60 h-60 bg-[#c8a0f0]/15 rounded-full blur-3xl pointer-events-none max-w-full"></div>
 
         {/* Section Header */}
-        <div className="text-center max-w-xl mx-auto mb-10 space-y-3">
+        <div className="text-center max-w-xl mx-auto mb-8 sm:mb-10 space-y-3">
           <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-[#3d1414]/70 border border-[#ff6b6b]/40 text-[#ff6b6b] text-xs font-black animate-pulse">
             <AlarmClock className="w-4 h-4" />
             <span>باقي 14 قطعة فقط بهذا السعر الترويجي</span>
           </div>
 
-          <h2 className="text-3xl sm:text-4xl font-headline font-black text-white">
+          <h2 className="text-2xl sm:text-4xl font-headline font-black text-white">
             استفد من العرض الحصري الآن
           </h2>
           <p className="text-sm sm:text-base text-[#a0b4c4]">
@@ -108,14 +108,14 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-8 text-right">
+        <form onSubmit={handleSubmit} className="space-y-6 sm:space-y-8 text-right">
           {/* Package Selector */}
           <div className="space-y-3">
-            <label className="block text-sm font-bold text-white">
+            <label className="block text-xs sm:text-sm font-bold text-white">
               اختر باقتك المفضلة:
             </label>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {STORE_PACKAGES.map((pkg) => {
                 const isSelected = selectedPackage.id === pkg.id;
                 return (
@@ -123,7 +123,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                     key={pkg.id}
                     id={`package-option-${pkg.id}`}
                     onClick={() => setSelectedPackage(pkg)}
-                    className={`relative p-4 sm:p-5 rounded-2xl border-2 cursor-pointer transition-all duration-300 flex flex-col justify-between ${
+                    className={`relative p-3.5 sm:p-5 rounded-2xl border-2 cursor-pointer transition-all duration-300 flex flex-col justify-between ${
                       isSelected
                         ? 'border-[#7dd3fc] bg-[#0e4d6e]/25 shadow-[0_0_25px_rgba(125,211,252,0.2)]'
                         : 'border-[#2a3a48]/50 bg-[#1a2438]/60 hover:border-[#7dd3fc]/40'
@@ -135,7 +135,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                       </div>
                     )}
 
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-start gap-2.5 sm:gap-3">
                       <div
                         className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
                           isSelected
@@ -155,12 +155,12 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                       </div>
                     </div>
 
-                    <div className="mt-4 pt-3 border-t border-white/5 flex items-baseline justify-between">
+                    <div className="mt-3 sm:mt-4 pt-2.5 sm:pt-3 border-t border-white/5 flex items-baseline justify-between">
                       <div className="text-right">
-                        <span className="block text-xl font-black text-[#7dd3fc]">
+                        <span className="block text-lg sm:text-xl font-black text-[#7dd3fc]">
                           {pkg.price.toLocaleString('ar-DZ')} دج
                         </span>
-                        <span className="block text-[11px] text-[#a0b4c4] line-through">
+                        <span className="block text-[10px] sm:text-[11px] text-[#a0b4c4] line-through">
                           {pkg.originalPrice.toLocaleString('ar-DZ')} دج
                         </span>
                       </div>
@@ -175,14 +175,14 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
           </div>
 
           {/* Customer Data Fields */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
             {/* Full Name */}
             <div className="space-y-1.5">
               <label htmlFor="fullname" className="text-xs sm:text-sm font-bold text-white">
                 الاسم واللقب بالكامل *
               </label>
               <div className="relative">
-                <User className="absolute right-3.5 top-3.5 text-[#a0b4c4] w-5 h-5" />
+                <User className="absolute right-3.5 top-3.5 text-[#a0b4c4] w-5 h-5 pointer-events-none" />
                 <input
                   id="fullname"
                   type="text"
@@ -190,7 +190,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="مثال: كريم بن عيسى"
-                  className="w-full pr-11 pl-4 py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white placeholder-[#a0b4c4]/50 text-sm outline-none transition-all"
+                  className="w-full pr-11 pl-4 py-3 sm:py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white placeholder-[#a0b4c4]/50 text-sm outline-none transition-all box-border"
                 />
               </div>
             </div>
@@ -201,7 +201,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                 رقم الهاتف (ضروري لتأكيد الشحن) *
               </label>
               <div className="relative">
-                <Phone className="absolute right-3.5 top-3.5 text-[#a0b4c4] w-5 h-5" />
+                <Phone className="absolute right-3.5 top-3.5 text-[#a0b4c4] w-5 h-5 pointer-events-none" />
                 <input
                   id="phone"
                   type="tel"
@@ -212,7 +212,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                     if (phoneError) setPhoneError('');
                   }}
                   placeholder="06 / 07 / 05 XX XX XX XX"
-                  className="w-full pr-11 pl-4 py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white placeholder-[#a0b4c4]/50 text-sm outline-none transition-all dir-ltr text-right"
+                  className="w-full pr-11 pl-4 py-3 sm:py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white placeholder-[#a0b4c4]/50 text-sm outline-none transition-all dir-ltr text-right box-border"
                 />
               </div>
               {phoneError && (
@@ -226,20 +226,20 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                 الولاية (58 ولاية) *
               </label>
               <div className="relative">
-                <MapPin className="absolute right-3.5 top-3.5 text-[#a0b4c4] w-5 h-5" />
+                <MapPin className="absolute right-3.5 top-3.5 text-[#a0b4c4] w-5 h-5 pointer-events-none" />
                 <select
                   id="wilaya"
                   required
                   value={wilayaCode}
                   onChange={(e) => setWilayaCode(e.target.value)}
-                  className="w-full pr-11 pl-4 py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white text-sm outline-none transition-all cursor-pointer appearance-none"
+                  className="w-full pr-11 pl-4 py-3 sm:py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white text-sm outline-none transition-all cursor-pointer appearance-none box-border"
                 >
                   <option value="" disabled className="bg-[#0f1524]">
                     اختر ولايتك من القائمة...
                   </option>
                   {ALGERIA_WILAYAS.map((w) => (
                     <option key={w.code} value={w.code} className="bg-[#0f1524]">
-                      {w.nameAr} ({w.nameFr})
+                      {w.code}. {w.nameAr} ({w.nameFr})
                     </option>
                   ))}
                 </select>
@@ -252,7 +252,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                 البلدية أو العنوان التقريبي *
               </label>
               <div className="relative">
-                <Home className="absolute right-3.5 top-3.5 text-[#a0b4c4] w-5 h-5" />
+                <Home className="absolute right-3.5 top-3.5 text-[#a0b4c4] w-5 h-5 pointer-events-none" />
                 <input
                   id="address"
                   type="text"
@@ -260,14 +260,14 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
                   placeholder="مثال: بلدية درارية، قرب المسجد أو المدرسة"
-                  className="w-full pr-11 pl-4 py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white placeholder-[#a0b4c4]/50 text-sm outline-none transition-all"
+                  className="w-full pr-11 pl-4 py-3 sm:py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white placeholder-[#a0b4c4]/50 text-sm outline-none transition-all box-border"
                 />
               </div>
             </div>
           </div>
 
           {/* Live Price Summary Box */}
-          <div className="p-5 rounded-2xl bg-[#0a0e1a]/70 border border-[#7dd3fc]/20 space-y-2.5 text-xs sm:text-sm shadow-inner">
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#0a0e1a]/70 border border-[#7dd3fc]/20 space-y-2.5 text-xs sm:text-sm shadow-inner">
             <div className="flex justify-between items-center text-[#a0b4c4]">
               <span>الباقة المختارة:</span>
               <span className="font-bold text-white">{selectedPackage.name}</span>
@@ -280,9 +280,9 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
               <span>طريقة الدفع:</span>
               <span className="font-bold text-white">الدفع نقداً بعد المعاينة عند الاستلام</span>
             </div>
-            <div className="pt-3 border-t border-[#2a3a48] flex justify-between items-center text-base sm:text-lg font-black text-white">
+            <div className="pt-3 border-t border-[#2a3a48] flex justify-between items-center text-sm sm:text-lg font-black text-white">
               <span>المجموع الواجب دفعه عند الاستلام:</span>
-              <span className="text-[#7dd3fc] text-2xl">
+              <span className="text-[#7dd3fc] text-xl sm:text-2xl">
                 {selectedPackage.price.toLocaleString('ar-DZ')} دج
               </span>
             </div>
@@ -293,7 +293,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
             id="submit-order-button"
             type="submit"
             disabled={isSubmitting}
-            className="w-full py-4 sm:py-5 rounded-full bg-[#7dd3fc] hover:bg-[#c8eaff] text-[#001f2e] font-headline font-black text-base sm:text-xl tracking-wide shadow-[0_0_40px_rgba(125,211,252,0.4)] hover:shadow-[0_0_60px_rgba(125,211,252,0.6)] active:scale-[0.99] transition-all duration-300 flex items-center justify-center gap-3 disabled:opacity-75 cursor-pointer"
+            className="w-full py-3.5 sm:py-5 px-4 rounded-2xl sm:rounded-full bg-[#7dd3fc] hover:bg-[#c8eaff] text-[#001f2e] font-headline font-black text-sm sm:text-xl tracking-wide shadow-[0_0_40px_rgba(125,211,252,0.4)] hover:shadow-[0_0_60px_rgba(125,211,252,0.6)] active:scale-[0.99] transition-all duration-300 flex items-center justify-center gap-2 sm:gap-3 disabled:opacity-75 cursor-pointer text-center"
           >
             {isSubmitting ? (
               <span className="inline-flex items-center gap-2">
@@ -302,25 +302,25 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
               </span>
             ) : (
               <>
-                <ShoppingBag className="w-6 h-6" />
-                <span>تأكيد الطلب الآن - الدفع بعد المعاينة عند الاستلام</span>
+                <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
+                <span className="text-xs sm:text-lg lg:text-xl leading-snug">تأكيد الطلب الآن - الدفع بعد المعاينة عند الاستلام</span>
               </>
             )}
           </button>
 
           {/* Security and Guarantee Footnotes */}
-          <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-[#a0b4c4] pt-2">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="text-[#7dd3fc] w-4 h-4" />
-              <span>ضمان أصالة المنتج 100%</span>
+          <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-6 text-[11px] sm:text-xs text-[#a0b4c4] pt-1 sm:pt-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <ShieldCheck className="text-[#7dd3fc] w-4 h-4 shrink-0" />
+              <span>ضمان أصالة 100%</span>
             </div>
-            <div className="flex items-center gap-2">
-              <Lock className="text-[#7dd3fc] w-4 h-4" />
-              <span>بياناتكم محمية وسرية تماماً</span>
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <Lock className="text-[#7dd3fc] w-4 h-4 shrink-0" />
+              <span>بياناتكم سرية ومحمية</span>
             </div>
-            <div className="flex items-center gap-2">
-              <Headset className="text-[#7dd3fc] w-4 h-4" />
-              <span>خدمة عملاء ومتابعة بعد البيع 7/7</span>
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <Headset className="text-[#7dd3fc] w-4 h-4 shrink-0" />
+              <span>متابعة وخدمة عملاء 7/7</span>
             </div>
           </div>
         </form>

@@ -63,14 +63,14 @@ export const SoundPlayerBar: React.FC<SoundPlayerBarProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-      <div className="bg-[#0f1524] border border-[#7dd3fc]/30 rounded-3xl p-6 sm:p-8 max-w-lg w-full text-right shadow-[0_0_50px_rgba(125,211,252,0.2)] relative">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-[#0f1524] border border-[#7dd3fc]/30 rounded-3xl p-5 sm:p-8 max-w-lg w-full text-right shadow-[0_0_50px_rgba(125,211,252,0.2)] relative overflow-hidden my-auto">
         <button
           onClick={() => {
             handleStop();
             onClose();
           }}
-          className="absolute top-5 left-5 p-2 text-[#a0b4c4] hover:text-white rounded-full bg-[#1a2438] transition-colors"
+          className="absolute top-4 left-4 sm:top-5 sm:left-5 p-2 text-[#a0b4c4] hover:text-white rounded-full bg-[#1a2438] transition-colors"
         >
           <X className="w-5 h-5" />
         </button>

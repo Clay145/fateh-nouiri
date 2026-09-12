@@ -6,8 +6,8 @@ export const Footer: React.FC = () => {
   const [modalType, setModalType] = useState<'privacy' | 'terms' | 'warranty' | null>(null);
 
   return (
-    <footer id="main-footer" className="w-full bg-[#0a0e1a] border-t border-[#2a3a48]/60 py-12 px-4 sm:px-6 lg:px-12 text-right">
-      <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
+    <footer id="main-footer" className="w-full bg-[#0a0e1a] border-t border-[#2a3a48]/60 pt-10 pb-28 lg:pb-12 px-4 sm:px-6 lg:px-12 text-center sm:text-right overflow-hidden">
+      <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-5 sm:gap-6">
         {/* Brand */}
         <div className="flex items-center gap-3">
           <img
@@ -24,7 +24,7 @@ export const Footer: React.FC = () => {
         </div>
 
         {/* Links */}
-        <div className="flex flex-wrap items-center justify-center gap-6 text-xs sm:text-sm text-[#a0b4c4]">
+        <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 text-xs sm:text-sm text-[#a0b4c4]">
           <button
             onClick={() => setModalType('privacy')}
             className="hover:text-white transition-colors cursor-pointer"

@@ -36,14 +36,14 @@ export const FeaturesSection: React.FC<FeaturesSectionProps> = ({ onOpenSoundPre
   };
 
   return (
-    <section id="features" className="py-16 sm:py-24 px-4 sm:px-6 lg:px-12 max-w-7xl mx-auto w-full">
+    <section id="features" className="py-12 sm:py-24 px-4 sm:px-6 lg:px-12 max-w-7xl mx-auto w-full overflow-hidden">
       {/* Heading */}
-      <div className="text-center max-w-2xl mx-auto mb-14 space-y-3">
+      <div className="text-center max-w-2xl mx-auto mb-10 sm:mb-14 space-y-3">
         <div className="inline-flex items-center gap-1.5 text-xs font-bold text-[#7dd3fc] uppercase tracking-wider bg-[#0e4d6e]/40 px-4 py-1 rounded-full border border-[#7dd3fc]/30">
           <Sparkles className="w-3.5 h-3.5" />
           <span>هندسة الرفاهية والراحة</span>
         </div>
-        <h2 className="text-3xl sm:text-4xl font-headline font-black text-white">
+        <h2 className="text-2xl sm:text-4xl font-headline font-black text-white">
           5 تقنيات علاجية مدمجة في جهاز واحد
         </h2>
         <p className="text-sm sm:text-base text-[#a0b4c4]">
@@ -52,7 +52,7 @@ export const FeaturesSection: React.FC<FeaturesSectionProps> = ({ onOpenSoundPre
       </div>
 
       {/* Grid of 5 Features */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
         {THERAPEUTIC_FEATURES.map((feature, idx) => {
           const isSelected = activeFeatureIdx === idx;
           const isTertiary = feature.tagColor === 'tertiary';
@@ -67,7 +67,7 @@ export const FeaturesSection: React.FC<FeaturesSectionProps> = ({ onOpenSoundPre
                   onOpenSoundPreview();
                 }
               }}
-              className={`bg-[#141c2e]/60 backdrop-blur-xl border rounded-2xl p-6 sm:p-7 relative group cursor-pointer transition-all duration-300 text-right flex flex-col justify-between ${
+              className={`bg-[#141c2e]/60 backdrop-blur-xl border rounded-2xl p-5 sm:p-7 relative group cursor-pointer transition-all duration-300 text-right flex flex-col justify-between ${
                 feature.colSpan ? feature.colSpan : ''
               } ${
                 isSelected

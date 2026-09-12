@@ -56,7 +56,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0e1a] text-[#e0e8f0] flex flex-col selection:bg-[#7dd3fc]/30 selection:text-[#7dd3fc]">
+    <div className="min-h-screen bg-[#0a0e1a] text-[#e0e8f0] flex flex-col selection:bg-[#7dd3fc]/30 selection:text-[#7dd3fc] w-full max-w-full overflow-x-hidden">
       {/* Top Banner with countdown */}
       <TopBanner />
 
@@ -69,7 +69,7 @@ export default function App() {
       />
 
       {/* Main Content Sections */}
-      <main className="flex-1 w-full flex flex-col items-center">
+      <main className="flex-1 w-full max-w-full flex flex-col items-center overflow-x-hidden">
         {/* Hero Section */}
         <HeroSection
           onOpenSoundPreview={() => setSoundModalOpen(true)}
