@@ -1,18 +1,16 @@
 import React, { useState } from 'react';
 import { ASSETS } from '../data/constants';
-import { ShoppingBag, Volume2, Package, Menu, X, LayoutDashboard } from 'lucide-react';
+import { ShoppingBag, Volume2, Package, Menu, X } from 'lucide-react';
 
 interface NavbarProps {
   onOpenSoundPreview: () => void;
   onOpenOrdersHistory: () => void;
-  onOpenAdminDashboard: () => void;
   soundPlaying: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   onOpenSoundPreview,
   onOpenOrdersHistory,
-  onOpenAdminDashboard,
   soundPlaying,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -98,18 +96,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             <Package className="w-4 h-4" />
           </button>
 
-          {/* Admin Dashboard Live Button (Desktop) */}
-          <button
-            id="admin-dashboard-button"
-            onClick={onOpenAdminDashboard}
-            title="لوحة تحكم الطلبات والزبائن المباشرة"
-            className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-bold bg-[#141c2e] border border-blue-500/40 text-blue-300 hover:text-white hover:bg-blue-600/30 transition-all shadow-[0_0_15px_rgba(59,130,246,0.15)]"
-          >
-            <LayoutDashboard className="w-3.5 h-3.5 text-[#7dd3fc]" />
-            <span>لوحة الإدارة</span>
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          </button>
-
           {/* Main Order CTA */}
           <a
             id="header-order-cta"
@@ -163,42 +149,27 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             الأسئلة الشائعة
           </a>
-          <div className="pt-2 flex flex-col gap-2">
+          <div className="pt-2 flex items-center justify-between">
             <button
               onClick={() => {
                 setMobileMenuOpen(false);
-                onOpenAdminDashboard();
+                onOpenSoundPreview();
               }}
-              className="py-2.5 px-3 rounded-xl bg-blue-500/15 border border-blue-500/30 text-xs text-blue-300 font-bold flex items-center justify-between"
+              className="text-xs text-[#7dd3fc] flex items-center gap-1.5"
             >
-              <div className="flex items-center gap-2">
-                <LayoutDashboard className="w-4 h-4 text-[#7dd3fc]" />
-                <span>لوحة تحكم الطلبات والزبائن المباشرة</span>
-              </div>
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <Volume2 className="w-4 h-4" />
+              <span>أصوات الاسترخاء</span>
             </button>
-            <div className="flex items-center justify-between pt-1">
-              <button
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  onOpenSoundPreview();
-                }}
-                className="text-xs text-[#7dd3fc] flex items-center gap-1.5"
-              >
-                <Volume2 className="w-4 h-4" />
-                <span>أصوات الاسترخاء</span>
-              </button>
-              <button
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  onOpenOrdersHistory();
-                }}
-                className="text-xs text-[#c8a0f0] flex items-center gap-1.5"
-              >
-                <Package className="w-4 h-4" />
-                <span>متابعة طلبيتي</span>
-              </button>
-            </div>
+            <button
+              onClick={() => {
+                setMobileMenuOpen(false);
+                onOpenOrdersHistory();
+              }}
+              className="text-xs text-[#c8a0f0] flex items-center gap-1.5"
+            >
+              <Package className="w-4 h-4" />
+              <span>متابعة طلبيتي</span>
+            </button>
           </div>
         </div>
       )}

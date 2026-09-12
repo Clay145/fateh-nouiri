@@ -35,13 +35,16 @@ import {
   X,
   AlertCircle,
   FileSpreadsheet,
+  LogOut,
 } from 'lucide-react';
+import { removeAdminToken } from '../services/orderService';
 
 interface AdminDashboardProps {
   onExitDashboard: () => void;
+  onLogout?: () => void;
 }
 
-export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard }) => {
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard, onLogout }) => {
   const [orders, setOrders] = useState<PlacedOrder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
@@ -393,10 +396,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard 
           {/* Return to Store */}
           <button
             onClick={onExitDashboard}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold bg-[#7dd3fc] text-slate-950 hover:bg-[#60a5fa] transition shadow-[0_0_20px_rgba(125,211,252,0.2)]"
+            className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-bold bg-[#7dd3fc] text-slate-950 hover:bg-[#60a5fa] transition shadow-[0_0_20px_rgba(125,211,252,0.2)]"
           >
             <span>معاينة المتجر</span>
             <Eye className="w-4 h-4" />
+          </button>
+
+          {/* Logout Button */}
+          <button
+            onClick={() => {
+              removeAdminToken();
+              if (onLogout) {
+                onLogout();
+              } else {
+                onExitDashboard();
+              }
+            }}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-red-400 bg-red-500/10 border border-red-500/25 hover:bg-red-500/20 transition"
+            title="تسجيل الخروج وقفل لوحة الإدارة"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">قفل اللوحة</span>
           </button>
         </div>
       </header>

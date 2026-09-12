@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
 import { ASSETS } from '../data/constants';
-import { ShieldCheck, Truck, RotateCcw, X } from 'lucide-react';
+import { ShieldCheck, Truck, RotateCcw, X, Lock } from 'lucide-react';
 
-export const Footer: React.FC = () => {
+interface FooterProps {
+  onOpenAdmin?: () => void;
+}
+
+export const Footer: React.FC<FooterProps> = ({ onOpenAdmin }) => {
   const [modalType, setModalType] = useState<'privacy' | 'terms' | 'warranty' | null>(null);
 
   return (
@@ -45,10 +49,21 @@ export const Footer: React.FC = () => {
           </button>
         </div>
 
-        {/* Copyright */}
-        <p className="text-xs text-[#a0b4c4]">
-          © 2024 Theoria Luxury. جميع الحقوق محفوظة لمتجر ثيوريا الرسمي في الجزائر.
-        </p>
+        {/* Copyright & Admin link */}
+        <div className="flex items-center gap-3">
+          <p className="text-xs text-[#a0b4c4]">
+            © 2024 Theoria Luxury. جميع الحقوق محفوظة لمتجر ثيوريا الرسمي في الجزائر.
+          </p>
+          {onOpenAdmin && (
+            <button
+              onClick={onOpenAdmin}
+              title="دخول المشرف (محمي)"
+              className="text-[#3a4b5f] hover:text-[#7dd3fc] transition p-1 rounded hover:bg-slate-800/40 cursor-pointer"
+            >
+              <Lock className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Policies Modal */}

@@ -144,13 +144,52 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Admin secret key
+  const ADMIN_PASSWORD = process.env.ADMIN_SECRET_KEY || 'theoria2026';
+
+  // Admin authentication middleware helper
+  function checkAdminAuth(req: Request, res: Response, next: () => void) {
+    const authHeader = req.headers.authorization;
+    const queryToken = req.query.token as string;
+    const provided = (authHeader ? authHeader.replace(/^Bearer\s+/i, '') : '') || queryToken;
+
+    if (provided && provided === ADMIN_PASSWORD) {
+      return next();
+    }
+    return res.status(401).json({ success: false, error: 'غير مصرح لك. كلمة المرور غير صحيحة.' });
+  }
+
+  // Admin login endpoint
+  app.post('/api/admin/login', (req: Request, res: Response) => {
+    const { password } = req.body;
+    if (password && password === ADMIN_PASSWORD) {
+      return res.json({ success: true, token: ADMIN_PASSWORD });
+    }
+    return res.status(401).json({ success: false, error: 'كلمة مرور لوحة الإدارة غير صحيحة' });
+  });
+
+  // Admin verify session endpoint
+  app.get('/api/admin/verify', (req: Request, res: Response) => {
+    const authHeader = req.headers.authorization;
+    const provided = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : '';
+    if (provided && provided === ADMIN_PASSWORD) {
+      return res.json({ success: true, authenticated: true });
+    }
+    return res.status(401).json({ success: false, authenticated: false });
+  });
+
   // API Routes
   app.get('/api/health', (req: Request, res: Response) => {
     res.json({ status: 'ok', timestamp: Date.now(), activeSseClients: sseClients.length });
   });
 
-  // Real-time Server-Sent Events stream for Admin Dashboard
+  // Real-time Server-Sent Events stream for Admin Dashboard (protected)
   app.get('/api/orders/stream', (req: Request, res: Response) => {
+    const token = req.query.token as string;
+    if (!token || token !== ADMIN_PASSWORD) {
+      return res.status(401).json({ success: false, error: 'Unauthorized SSE stream' });
+    }
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -178,12 +217,12 @@ async function startServer() {
     });
   });
 
-  // GET all orders
-  app.get('/api/orders', (req: Request, res: Response) => {
+  // GET all orders - Protected: only authenticated admin can see full customer list
+  app.get('/api/orders', checkAdminAuth, (req: Request, res: Response) => {
     res.json({ success: true, orders });
   });
 
-  // POST new order
+  // POST new order - Open: customer landing page submits their purchase
   app.post('/api/orders', (req: Request, res: Response) => {
     const body = req.body;
     if (!body.customerName || !body.phone) {
@@ -214,8 +253,8 @@ async function startServer() {
     return res.status(201).json({ success: true, order: newOrder });
   });
 
-  // PATCH order status or notes
-  app.patch('/api/orders/:id', (req: Request, res: Response) => {
+  // PATCH order status or notes - Protected: only admin can modify
+  app.patch('/api/orders/:id', checkAdminAuth, (req: Request, res: Response) => {
     const { id } = req.params;
     const { status, notes } = req.body;
 
@@ -239,8 +278,8 @@ async function startServer() {
     return res.json({ success: true, order: orders[orderIndex] });
   });
 
-  // DELETE order
-  app.delete('/api/orders/:id', (req: Request, res: Response) => {
+  // DELETE order - Protected: only admin can delete
+  app.delete('/api/orders/:id', checkAdminAuth, (req: Request, res: Response) => {
     const { id } = req.params;
     const initialLen = orders.length;
     orders = orders.filter((o) => o.id !== id && o.orderCode !== id);
@@ -255,8 +294,8 @@ async function startServer() {
     return res.json({ success: true, message: 'Order deleted' });
   });
 
-  // GET stats
-  app.get('/api/stats', (req: Request, res: Response) => {
+  // GET stats - Protected
+  app.get('/api/stats', checkAdminAuth, (req: Request, res: Response) => {
     const totalOrders = orders.length;
     const totalRevenue = orders.reduce((sum, o) => (o.status !== 'ملغي' ? sum + o.totalPrice : sum), 0);
     const newOrders = orders.filter((o) => o.status === 'جديد').length;

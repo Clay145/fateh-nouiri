@@ -14,14 +14,30 @@ import { SoundPlayerBar } from './components/SoundPlayerBar';
 import { OrderSuccessModal } from './components/OrderSuccessModal';
 import { OrdersHistoryModal } from './components/OrdersHistoryModal';
 import { AdminDashboard } from './components/AdminDashboard';
+import { AdminAuthGate } from './components/AdminAuthGate';
 import { PlacedOrder } from './types';
+import { verifyAdminSession, removeAdminToken } from './services/orderService';
 
 export default function App() {
   const [viewMode, setViewMode] = useState<'store' | 'admin'>('store');
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(false);
   const [soundModalOpen, setSoundModalOpen] = useState(false);
   const [soundPlaying, setSoundPlaying] = useState(false);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [successfulOrder, setSuccessfulOrder] = useState<PlacedOrder | null>(null);
+
+  // Check auth session on startup
+  useEffect(() => {
+    async function checkAuth() {
+      try {
+        const valid = await verifyAdminSession();
+        setIsAdminAuthenticated(valid);
+      } catch {
+        setIsAdminAuthenticated(false);
+      }
+    }
+    checkAuth();
+  }, []);
 
   useEffect(() => {
     const handleHash = () => {
@@ -47,12 +63,33 @@ export default function App() {
     window.location.hash = '';
   };
 
+  const handleAdminLogout = () => {
+    removeAdminToken();
+    setIsAdminAuthenticated(false);
+    setViewMode('store');
+    window.location.hash = '';
+  };
+
   const handleOrderSuccess = (order: PlacedOrder) => {
     setSuccessfulOrder(order);
   };
 
+  // When user enters admin route
   if (viewMode === 'admin') {
-    return <AdminDashboard onExitDashboard={handleExitAdmin} />;
+    if (!isAdminAuthenticated) {
+      return (
+        <AdminAuthGate
+          onAuthenticated={() => setIsAdminAuthenticated(true)}
+          onExit={handleExitAdmin}
+        />
+      );
+    }
+    return (
+      <AdminDashboard
+        onExitDashboard={handleExitAdmin}
+        onLogout={handleAdminLogout}
+      />
+    );
   }
 
   return (
@@ -60,11 +97,10 @@ export default function App() {
       {/* Top Banner with countdown */}
       <TopBanner />
 
-      {/* Main Sticky Navbar */}
+      {/* Main Sticky Navbar - Clean customer navigation without admin button */}
       <Navbar
         onOpenSoundPreview={() => setSoundModalOpen(true)}
         onOpenOrdersHistory={() => setHistoryModalOpen(true)}
-        onOpenAdminDashboard={handleOpenAdmin}
         soundPlaying={soundPlaying}
       />
 
@@ -97,8 +133,8 @@ export default function App() {
         <OrderSection onOrderSuccess={handleOrderSuccess} />
       </main>
 
-      {/* Footer */}
-      <Footer />
+      {/* Footer with secure admin lock shortcut */}
+      <Footer onOpenAdmin={handleOpenAdmin} />
 
       {/* Mobile Sticky Quick Order Bar */}
       <FloatingMobileBar />

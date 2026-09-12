@@ -2,6 +2,69 @@ import { PlacedOrder, OrderStatus } from '../types';
 
 const STORAGE_KEY = 'theoria_orders';
 const BROADCAST_CHANNEL_NAME = 'theoria_orders_channel';
+const ADMIN_TOKEN_KEY = 'theoria_admin_token';
+
+export function getAdminToken(): string | null {
+  try {
+    return localStorage.getItem(ADMIN_TOKEN_KEY) || sessionStorage.getItem(ADMIN_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setAdminToken(token: string, remember = true): void {
+  try {
+    if (remember) {
+      localStorage.setItem(ADMIN_TOKEN_KEY, token);
+    } else {
+      sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function removeAdminToken(): void {
+  try {
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
+    sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+export async function loginAdmin(password: string): Promise<boolean> {
+  try {
+    const res = await fetch('/api/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.token) {
+        setAdminToken(data.token, true);
+        return true;
+      }
+    }
+  } catch (err) {
+    console.error('Admin login error:', err);
+  }
+  return false;
+}
+
+export async function verifyAdminSession(): Promise<boolean> {
+  const token = getAdminToken();
+  if (!token) return false;
+  try {
+    const res = await fetch('/api/admin/verify', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 // In-memory / broadcast channel for multi-tab realtime sync
 let channel: BroadcastChannel | null = null;
@@ -55,8 +118,13 @@ export function playOrderNotificationSound(): void {
  * Fetch all orders from backend API, with fallback to local storage
  */
 export async function getOrders(): Promise<PlacedOrder[]> {
+  const token = getAdminToken();
   try {
-    const res = await fetch('/api/orders');
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const res = await fetch('/api/orders', { headers });
     if (res.ok) {
       const data = await res.json();
       if (data.success && Array.isArray(data.orders)) {
@@ -152,10 +220,15 @@ export async function updateOrderStatus(
   status?: OrderStatus,
   notes?: string
 ): Promise<boolean> {
+  const token = getAdminToken();
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
     const res = await fetch(`/api/orders/${orderId}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ status, notes }),
     });
     if (res.ok) {
@@ -193,8 +266,13 @@ export async function updateOrderStatus(
  * Delete an order
  */
 export async function deleteOrder(orderId: string): Promise<boolean> {
+  const token = getAdminToken();
   try {
-    const res = await fetch(`/api/orders/${orderId}`, { method: 'DELETE' });
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const res = await fetch(`/api/orders/${orderId}`, { method: 'DELETE', headers });
     if (res.ok) {
       if (channel) {
         channel.postMessage({ type: 'ORDER_DELETED', id: orderId });
@@ -252,7 +330,9 @@ export function subscribeToRealtimeOrders(callbacks: {
     if (isClosed) return;
 
     try {
-      eventSource = new EventSource('/api/orders/stream');
+      const token = getAdminToken();
+      const sseUrl = token ? `/api/orders/stream?token=${encodeURIComponent(token)}` : '/api/orders/stream';
+      eventSource = new EventSource(sseUrl);
 
       eventSource.onopen = () => {
         callbacks.onConnectionChange?.(true);
