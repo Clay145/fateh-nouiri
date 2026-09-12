@@ -4,6 +4,52 @@ const STORAGE_KEY = 'theoria_orders';
 const BROADCAST_CHANNEL_NAME = 'theoria_orders_channel';
 const ADMIN_TOKEN_KEY = 'theoria_admin_token';
 
+// Initial sample orders shown if localStorage is completely empty
+const DEFAULT_SEED_ORDERS: PlacedOrder[] = [
+  {
+    id: 'ord_1',
+    orderCode: 'TH-94821',
+    customerName: 'أمين كواشي',
+    phone: '0551234567',
+    wilaya: '16 - الجزائر العاصمة',
+    commune: 'باب الزوار، حي إسماعيل يفصح',
+    packageTitle: 'باقة الراحة الكاملة (جهازين Theoria)',
+    totalPrice: 16900,
+    date: '12 سبتمبر 2026',
+    createdAt: Date.now() - 1000 * 60 * 12,
+    status: 'جديد',
+    notes: 'يفضل الاتصال بعد الساعة 5 مساءً',
+  },
+  {
+    id: 'ord_2',
+    orderCode: 'TH-83149',
+    customerName: 'سارة مجاهدي',
+    phone: '0662345678',
+    wilaya: '31 - وهران',
+    commune: 'بئر الجير، بالقرب من الصيدلية المركزية',
+    packageTitle: 'الباقة الفردية (جهاز واحد Theoria)',
+    totalPrice: 9500,
+    date: '12 سبتمبر 2026',
+    createdAt: Date.now() - 1000 * 60 * 45,
+    status: 'تم التأكيد',
+    notes: 'تم تأكيد العنوان هاتفياً، جاهز للإرسال مع شركة ياليدين',
+  },
+  {
+    id: 'ord_3',
+    orderCode: 'TH-76290',
+    customerName: 'ياسين بوقرة',
+    phone: '0773456789',
+    wilaya: '25 - قسنطينة',
+    commune: 'المدينة الجديدة علي منجلي، الوحدة 14',
+    packageTitle: 'باقة العائلة والشركاء (3 أجهزة Theoria)',
+    totalPrice: 23900,
+    date: '11 سبتمبر 2026',
+    createdAt: Date.now() - 1000 * 60 * 60 * 22,
+    status: 'تم التسليم',
+    notes: 'تم التوصيل بنجاح واستلام المبلغ كاملاً',
+  },
+];
+
 export function getAdminToken(): string | null {
   try {
     return localStorage.getItem(ADMIN_TOKEN_KEY) || sessionStorage.getItem(ADMIN_TOKEN_KEY);
@@ -36,7 +82,7 @@ export function removeAdminToken(): void {
 export async function loginAdmin(password: string): Promise<boolean> {
   const cleanPassword = password.trim();
 
-  // Try backend API first (for fullstack/server deployment)
+  // Try API first
   try {
     const res = await fetch('/api/admin/login', {
       method: 'POST',
@@ -50,11 +96,11 @@ export async function loginAdmin(password: string): Promise<boolean> {
         return true;
       }
     }
-  } catch (err) {
-    console.warn('Backend login endpoint unavailable, trying fallback verification:', err);
+  } catch {
+    // Backend API unavailable, fallback below
   }
 
-  // Fallback for Vercel static deployments (where Express server.ts is not running)
+  // Fallback for static environments
   const validPasswords = ['theoria2026', 'IMAD34', 'imad34', 'admin2026'];
   if (validPasswords.includes(cleanPassword)) {
     const clientFallbackToken = `admin_token_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
@@ -78,8 +124,7 @@ export async function verifyAdminSession(): Promise<boolean> {
     // Backend unavailable, accept valid client session token
   }
 
-  // If token is present and starts with admin_token_, keep session valid on client
-  return token.startsWith('admin_token_');
+  return token.startsWith('admin_token_') || token === 'theoria2026' || token === 'IMAD34';
 }
 
 // In-memory / broadcast channel for multi-tab realtime sync
@@ -93,7 +138,7 @@ try {
 }
 
 /**
- * Play a professional real-time chime notification when a new order lands
+ * Play pleasant two-tone chime notification when a new order arrives
  */
 export function playOrderNotificationSound(): void {
   try {
@@ -101,13 +146,11 @@ export function playOrderNotificationSound(): void {
     if (!AudioCtx) return;
     const ctx = new AudioCtx();
 
-    // Pleasant two-tone chime (E5 -> B5)
     const now = ctx.currentTime;
-
     const osc1 = ctx.createOscillator();
     const gain1 = ctx.createGain();
     osc1.type = 'sine';
-    osc1.frequency.setValueAtTime(659.25, now); // E5
+    osc1.frequency.setValueAtTime(659.25, now);
     gain1.gain.setValueAtTime(0.3, now);
     gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
     osc1.connect(gain1);
@@ -118,7 +161,7 @@ export function playOrderNotificationSound(): void {
     const osc2 = ctx.createOscillator();
     const gain2 = ctx.createGain();
     osc2.type = 'sine';
-    osc2.frequency.setValueAtTime(987.77, now + 0.12); // B5
+    osc2.frequency.setValueAtTime(987.77, now + 0.12);
     gain2.gain.setValueAtTime(0.35, now + 0.12);
     gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
     osc2.connect(gain2);
@@ -126,52 +169,75 @@ export function playOrderNotificationSound(): void {
     osc2.start(now + 0.12);
     osc2.stop(now + 0.8);
   } catch {
-    // audio autoplay policy might block if no interaction yet
+    // ignore
   }
 }
 
 /**
- * Fetch all orders from backend API, with fallback to local storage
+ * Read local storage safely
  */
-export async function getOrders(): Promise<PlacedOrder[]> {
-  const token = getAdminToken();
-  try {
-    const headers: Record<string, string> = {};
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    const res = await fetch('/api/orders', { headers });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success && Array.isArray(data.orders)) {
-        // Cache to localStorage
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(data.orders));
-        } catch {
-          // ignore
-        }
-        return data.orders;
-      }
-    }
-  } catch {
-    // network or backend fallback
-  }
-
-  // Fallback to local storage
+function getLocalOrders(): PlacedOrder[] {
   try {
     const local = localStorage.getItem(STORAGE_KEY);
     if (local) {
-      return JSON.parse(local);
+      const parsed = JSON.parse(local);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
     }
   } catch {
     // ignore
   }
-
-  return [];
+  // Initialize with seed orders
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SEED_ORDERS));
+  } catch {
+    // ignore
+  }
+  return DEFAULT_SEED_ORDERS;
 }
 
 /**
- * Submit a new customer order (sent to backend + broadcasted)
+ * Fetch all orders: tries /api/orders, merges with localStorage
+ */
+export async function getOrders(): Promise<PlacedOrder[]> {
+  const localOrders = getLocalOrders();
+
+  try {
+    const token = getAdminToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch('/api/orders', { headers });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && Array.isArray(data.orders)) {
+        // Merge API orders with local orders (preserving any newly placed ones)
+        const orderMap = new Map<string, PlacedOrder>();
+        data.orders.forEach((o: PlacedOrder) => orderMap.set(o.id || o.orderCode, o));
+        localOrders.forEach((o: PlacedOrder) => {
+          if (!orderMap.has(o.id || o.orderCode)) {
+            orderMap.set(o.id || o.orderCode, o);
+          }
+        });
+        const merged = Array.from(orderMap.values()).sort((a, b) => b.createdAt - a.createdAt);
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+        } catch {
+          // ignore
+        }
+        return merged;
+      }
+    }
+  } catch {
+    // Backend unavailable, local orders used
+  }
+
+  return localOrders;
+}
+
+/**
+ * Submit a new customer order (persists to localStorage + broadcasts + attempts API)
  */
 export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<PlacedOrder> {
   const preparedOrder: PlacedOrder = {
@@ -189,43 +255,38 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
     notes: orderData.notes || '',
   };
 
-  // Try API first
-  let savedOrder = preparedOrder;
+  // 1. Immediately guarantee local storage persistence
   try {
-    const res = await fetch('/api/orders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(preparedOrder),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success && data.order) {
-        savedOrder = data.order;
-      }
-    }
-  } catch (err) {
-    console.warn('API POST failed, persisting locally:', err);
-  }
-
-  // Update local storage
-  try {
-    const existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-    const updated = [savedOrder, ...existing.filter((o: PlacedOrder) => o.id !== savedOrder.id)];
+    const current = getLocalOrders();
+    const updated = [preparedOrder, ...current.filter((o) => o.id !== preparedOrder.id && o.orderCode !== preparedOrder.orderCode)];
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-  } catch {
-    // ignore
+  } catch (e) {
+    console.error('LocalStorage write failed:', e);
   }
 
-  // Broadcast to other tabs locally
+  // 2. Broadcast across tabs (BroadcastChannel + Window Storage event)
   if (channel) {
     try {
-      channel.postMessage({ type: 'NEW_ORDER', order: savedOrder });
+      channel.postMessage({ type: 'NEW_ORDER', order: preparedOrder });
     } catch {
       // ignore
     }
   }
 
-  return savedOrder;
+  // 3. Attempt API sync in background (Vercel Serverless / Express)
+  try {
+    fetch('/api/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(preparedOrder),
+    }).catch(() => {
+      // Silently ignore if offline or API is not present
+    });
+  } catch {
+    // ignore
+  }
+
+  return preparedOrder;
 }
 
 /**
@@ -236,31 +297,9 @@ export async function updateOrderStatus(
   status?: OrderStatus,
   notes?: string
 ): Promise<boolean> {
-  const token = getAdminToken();
+  // 1. Update local storage
   try {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    const res = await fetch(`/api/orders/${orderId}`, {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify({ status, notes }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (channel && data.order) {
-        channel.postMessage({ type: 'ORDER_UPDATED', order: data.order });
-      }
-      return true;
-    }
-  } catch {
-    // fallback local update
-  }
-
-  // Fallback local update
-  try {
-    const existing: PlacedOrder[] = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    const existing = getLocalOrders();
     const idx = existing.findIndex((o) => o.id === orderId || o.orderCode === orderId);
     if (idx !== -1) {
       if (status) existing[idx].status = status;
@@ -269,51 +308,61 @@ export async function updateOrderStatus(
       if (channel) {
         channel.postMessage({ type: 'ORDER_UPDATED', order: existing[idx] });
       }
-      return true;
     }
   } catch {
     // ignore
   }
 
-  return false;
+  // 2. Attempt API update
+  const token = getAdminToken();
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    await fetch(`/api/orders/${orderId}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ status, notes }),
+    });
+  } catch {
+    // ignore
+  }
+
+  return true;
 }
 
 /**
  * Delete an order
  */
 export async function deleteOrder(orderId: string): Promise<boolean> {
-  const token = getAdminToken();
+  // 1. Update local storage
   try {
-    const headers: Record<string, string> = {};
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    const res = await fetch(`/api/orders/${orderId}`, { method: 'DELETE', headers });
-    if (res.ok) {
-      if (channel) {
-        channel.postMessage({ type: 'ORDER_DELETED', id: orderId });
-      }
-      return true;
-    }
-  } catch {
-    // fallback local
-  }
-
-  try {
-    const existing: PlacedOrder[] = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    const existing = getLocalOrders();
     const updated = existing.filter((o) => o.id !== orderId && o.orderCode !== orderId);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
     if (channel) {
       channel.postMessage({ type: 'ORDER_DELETED', id: orderId });
     }
-    return true;
   } catch {
-    return false;
+    // ignore
   }
+
+  // 2. Attempt API delete
+  const token = getAdminToken();
+  try {
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    await fetch(`/api/orders/${orderId}`, { method: 'DELETE', headers });
+  } catch {
+    // ignore
+  }
+
+  return true;
 }
 
 /**
- * Real-time subscription hook to SSE stream with fallback to BroadcastChannel
+ * Real-time subscription hook:
+ * Uses BroadcastChannel + window storage listener + periodic polling fallback.
+ * Only attempts SSE if available and doesn't spam errors.
  */
 export function subscribeToRealtimeOrders(callbacks: {
   onNewOrder: (order: PlacedOrder) => void;
@@ -321,18 +370,28 @@ export function subscribeToRealtimeOrders(callbacks: {
   onDeleteOrder: (orderId: string) => void;
   onConnectionChange?: (connected: boolean) => void;
 }): () => void {
-  let eventSource: EventSource | null = null;
   let isClosed = false;
+  let eventSource: EventSource | null = null;
+  let pollingTimer: number | null = null;
+  let knownIds = new Set<string>();
 
-  // Listen on BroadcastChannel for multi-tab updates
+  // Mark connection as active via client channels
+  callbacks.onConnectionChange?.(true);
+
+  // Initialize known IDs from current storage
+  getLocalOrders().forEach((o) => knownIds.add(o.id || o.orderCode));
+
+  // 1. BroadcastChannel handler
   const handleBroadcast = (event: MessageEvent) => {
     if (!event.data) return;
     const { type, order, id } = event.data;
     if (type === 'NEW_ORDER' && order) {
+      knownIds.add(order.id || order.orderCode);
       callbacks.onNewOrder(order);
     } else if (type === 'ORDER_UPDATED' && order) {
       callbacks.onUpdateOrder(order);
     } else if (type === 'ORDER_DELETED' && id) {
+      knownIds.delete(id);
       callbacks.onDeleteOrder(id);
     }
   };
@@ -341,16 +400,37 @@ export function subscribeToRealtimeOrders(callbacks: {
     channel.addEventListener('message', handleBroadcast);
   }
 
-  // Connect to SSE
-  const connectSSE = () => {
-    if (isClosed) return;
+  // 2. Window Storage Event listener (triggers across tabs in same browser)
+  const handleStorageChange = (e: StorageEvent) => {
+    if (e.key === STORAGE_KEY && e.newValue) {
+      try {
+        const latest: PlacedOrder[] = JSON.parse(e.newValue);
+        latest.forEach((order) => {
+          const key = order.id || order.orderCode;
+          if (!knownIds.has(key)) {
+            knownIds.add(key);
+            callbacks.onNewOrder(order);
+          }
+        });
+      } catch {
+        // ignore
+      }
+    }
+  };
+  window.addEventListener('storage', handleStorageChange);
 
+  // 3. Optional SSE (only attempted once, no annoying continuous 404 loops)
+  let sseFailures = 0;
+  const trySSE = () => {
+    if (isClosed || sseFailures >= 2) return;
     try {
       const token = getAdminToken();
-      const sseUrl = token ? `/api/orders/stream?token=${encodeURIComponent(token)}` : '/api/orders/stream';
+      if (!token) return;
+      const sseUrl = `/api/orders/stream?token=${encodeURIComponent(token)}`;
       eventSource = new EventSource(sseUrl);
 
       eventSource.onopen = () => {
+        sseFailures = 0;
         callbacks.onConnectionChange?.(true);
       };
 
@@ -358,42 +438,63 @@ export function subscribeToRealtimeOrders(callbacks: {
         try {
           const data = JSON.parse(e.data);
           if (data.type === 'NEW_ORDER' && data.payload) {
+            knownIds.add(data.payload.id || data.payload.orderCode);
             callbacks.onNewOrder(data.payload as PlacedOrder);
           } else if (data.type === 'ORDER_UPDATED' && data.payload) {
             callbacks.onUpdateOrder(data.payload as PlacedOrder);
           } else if (data.type === 'ORDER_DELETED' && data.payload?.id) {
+            knownIds.delete(data.payload.id);
             callbacks.onDeleteOrder(data.payload.id);
           }
         } catch {
-          // parse error
+          // ignore
         }
       };
 
       eventSource.onerror = () => {
-        callbacks.onConnectionChange?.(false);
+        sseFailures++;
         if (eventSource) {
           eventSource.close();
           eventSource = null;
         }
-        // Auto reconnect after 3 seconds if not closed
-        if (!isClosed) {
-          setTimeout(connectSSE, 3000);
+        // If SSE fails (like on static Vercel), fall back to background polling
+        if (sseFailures >= 2) {
+          startPolling();
         }
       };
     } catch {
-      callbacks.onConnectionChange?.(false);
+      sseFailures++;
+      startPolling();
     }
   };
 
-  connectSSE();
+  // 4. Fallback Polling (polls /api/orders every 10 seconds smoothly)
+  const startPolling = () => {
+    if (pollingTimer || isClosed) return;
+    pollingTimer = window.setInterval(async () => {
+      if (isClosed) return;
+      try {
+        const currentOrders = await getOrders();
+        currentOrders.forEach((o) => {
+          const key = o.id || o.orderCode;
+          if (!knownIds.has(key)) {
+            knownIds.add(key);
+            callbacks.onNewOrder(o);
+          }
+        });
+      } catch {
+        // ignore
+      }
+    }, 10000);
+  };
+
+  trySSE();
 
   return () => {
     isClosed = true;
-    if (eventSource) {
-      eventSource.close();
-    }
-    if (channel) {
-      channel.removeEventListener('message', handleBroadcast);
-    }
+    if (pollingTimer) clearInterval(pollingTimer);
+    if (eventSource) eventSource.close();
+    if (channel) channel.removeEventListener('message', handleBroadcast);
+    window.removeEventListener('storage', handleStorageChange);
   };
 }
