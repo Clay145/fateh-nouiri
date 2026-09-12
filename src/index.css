@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+@theme {
+  --font-headline: "Cairo", "Inter", sans-serif;
+  --font-body: "Cairo", "Inter", sans-serif;
+  --font-display: "Cairo", "Inter", sans-serif;
+
+  --color-primary: #7dd3fc;
+  --color-primary-fixed: #c8eaff;
+  --color-primary-fixed-dim: #7dd3fc;
+  --color-primary-container: #0e4d6e;
+  --color-on-primary: #001f2e;
+  --color-on-primary-container: #c8eaff;
+
+  --color-secondary: #88b4cc;
+  --color-secondary-fixed: #c0d8e8;
+  --color-secondary-container: #1a3a4e;
+  --color-on-secondary: #001f2e;
+  --color-on-secondary-container: #c0d8e8;
+
+  --color-tertiary: #c8a0f0;
+  --color-tertiary-fixed: #e8d0ff;
+  --color-tertiary-container: #3d2060;
+  --color-on-tertiary: #1a002e;
+  --color-on-tertiary-container: #e8d0ff;
+
+  --color-background: #0a0e1a;
+  --color-surface: #0f1524;
+  --color-surface-bright: #1a2438;
+  --color-surface-container: #141c2e;
+  --color-surface-container-high: #1a2438;
+  --color-surface-container-highest: #202c42;
+  --color-surface-container-low: #111828;
+  --color-surface-container-lowest: #0a0e1a;
+
+  --color-on-surface: #e0e8f0;
+  --color-on-surface-variant: #a0b4c4;
+  --color-outline: #4a6070;
+  --color-outline-variant: #2a3a48;
+
+  --color-error: #ff6b6b;
+  --color-error-container: #3d1414;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    font-family: 'Cairo', 'Inter', system-ui, -apple-system, sans-serif;
+  }
+  
+  body {
+    background-color: #0a0e1a;
+    color: #e0e8f0;
+    overflow-x: hidden;
+  }
+
+  /* Custom subtle scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0a0e1a;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1e293b;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #334155;
+  }
+}
+
+/* Glassmorphism utility helpers */
+.glass-panel {
+  background: rgba(15, 21, 36, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(125, 211, 252, 0.15);
+}
+
+.glass-panel-elevated {
+  background: rgba(20, 28, 46, 0.75);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(125, 211, 252, 0.22);
+}
+
+.glow-primary {
+  box-shadow: 0 0 35px rgba(125, 211, 252, 0.25);
+}
+
+.glow-primary-hover:hover {
+  box-shadow: 0 0 45px rgba(125, 211, 252, 0.45);
+}

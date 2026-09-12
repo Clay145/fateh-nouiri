@@ -1,0 +1,6 @@
+{
+  "name": "Theoria - متجر ثيوريا",
+  "description": "متجر ثيوريا الرسمي لجهاز مساج واسترخاء العينين الذكي بتقنية الضغط الهوائي والحرارة المهدئة والصوت المحيطي في الجزائر",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

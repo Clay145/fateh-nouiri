@@ -1,0 +1,330 @@
+import React, { useState } from 'react';
+import { STORE_PACKAGES } from '../data/packages';
+import { ALGERIA_WILAYAS } from '../data/wilayas';
+import { PackageOption, PlacedOrder } from '../types';
+import { trackPixelEvent } from '../utils/pixel';
+import { submitOrder } from '../services/orderService';
+import {
+  AlarmClock,
+  ShoppingBag,
+  User,
+  Phone,
+  MapPin,
+  Home,
+  ShieldCheck,
+  Lock,
+  Headset,
+  Sparkles,
+  Check,
+} from 'lucide-react';
+
+interface OrderSectionProps {
+  onOrderSuccess: (order: PlacedOrder) => void;
+}
+
+export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) => {
+  const [selectedPackage, setSelectedPackage] = useState<PackageOption>(STORE_PACKAGES[0]);
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [wilayaCode, setWilayaCode] = useState('');
+  const [address, setAddress] = useState('');
+  const [phoneError, setPhoneError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    // Validate Algerian phone number
+    const cleanPhone = phone.replace(/\s+/g, '');
+    const algerianPhoneRegex = /^(05|06|07|02)[0-9]{8}$/;
+    if (!algerianPhoneRegex.test(cleanPhone)) {
+      setPhoneError('يرجى إدخال رقم هاتف جزائري صالح يبدأ بـ 05 أو 06 أو 07 مكون من 10 أرقام');
+      return;
+    }
+    setPhoneError('');
+
+    const selectedWilayaObj = ALGERIA_WILAYAS.find((w) => w.code === wilayaCode);
+    const wilayaName = selectedWilayaObj ? selectedWilayaObj.nameAr : wilayaCode;
+
+    setIsSubmitting(true);
+
+    const placedData: Partial<PlacedOrder> = {
+      id: Date.now().toString(),
+      orderCode: `TH-${Math.floor(10000 + Math.random() * 90000)}`,
+      customerName: fullName,
+      phone: cleanPhone,
+      wilaya: wilayaName,
+      commune: address,
+      packageTitle: selectedPackage.name,
+      totalPrice: selectedPackage.price,
+      date: new Date().toLocaleDateString('ar-DZ', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      }),
+      status: 'جديد',
+    };
+
+    submitOrder(placedData)
+      .then((savedOrder) => {
+        // Fire Meta Pixel Purchase conversion event
+        trackPixelEvent('Purchase', {
+          value: selectedPackage.price,
+          currency: 'DZD',
+          content_name: selectedPackage.name,
+          order_id: savedOrder.orderCode,
+        });
+
+        setIsSubmitting(false);
+        onOrderSuccess(savedOrder);
+      })
+      .catch(() => {
+        // Fallback in case of unexpected promise error
+        const fallbackOrder = placedData as PlacedOrder;
+        setIsSubmitting(false);
+        onOrderSuccess(fallbackOrder);
+      });
+  };
+
+  return (
+    <section id="order-form" className="py-16 sm:py-24 px-4 sm:px-6 lg:px-12 max-w-5xl mx-auto w-full">
+      <div className="bg-[#141c2e]/80 backdrop-blur-2xl border-2 border-[#7dd3fc]/30 rounded-3xl p-6 sm:p-10 lg:p-12 shadow-[0_0_60px_rgba(125,211,252,0.15)] relative overflow-hidden">
+        {/* Accent Glow Corner */}
+        <div className="absolute -top-24 -right-24 w-60 h-60 bg-[#7dd3fc]/20 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="absolute -bottom-24 -left-24 w-60 h-60 bg-[#c8a0f0]/15 rounded-full blur-3xl pointer-events-none"></div>
+
+        {/* Section Header */}
+        <div className="text-center max-w-xl mx-auto mb-10 space-y-3">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-[#3d1414]/70 border border-[#ff6b6b]/40 text-[#ff6b6b] text-xs font-black animate-pulse">
+            <AlarmClock className="w-4 h-4" />
+            <span>باقي 14 قطعة فقط بهذا السعر الترويجي</span>
+          </div>
+
+          <h2 className="text-3xl sm:text-4xl font-headline font-black text-white">
+            استفد من العرض الحصري الآن
+          </h2>
+          <p className="text-sm sm:text-base text-[#a0b4c4]">
+            املأ الاستمارة أدناه وسنتصل بك هاتفياً لتأكيد العنوان وشحن طلبك فوراً
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-8 text-right">
+          {/* Package Selector */}
+          <div className="space-y-3">
+            <label className="block text-sm font-bold text-white">
+              اختر باقتك المفضلة:
+            </label>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {STORE_PACKAGES.map((pkg) => {
+                const isSelected = selectedPackage.id === pkg.id;
+                return (
+                  <div
+                    key={pkg.id}
+                    id={`package-option-${pkg.id}`}
+                    onClick={() => setSelectedPackage(pkg)}
+                    className={`relative p-4 sm:p-5 rounded-2xl border-2 cursor-pointer transition-all duration-300 flex flex-col justify-between ${
+                      isSelected
+                        ? 'border-[#7dd3fc] bg-[#0e4d6e]/25 shadow-[0_0_25px_rgba(125,211,252,0.2)]'
+                        : 'border-[#2a3a48]/50 bg-[#1a2438]/60 hover:border-[#7dd3fc]/40'
+                    }`}
+                  >
+                    {pkg.discountBadge && (
+                      <div className="absolute -top-3 left-4 bg-[#c8a0f0] text-[#1a002e] text-[10px] font-black px-2.5 py-0.5 rounded-full shadow-md">
+                        {pkg.discountBadge}
+                      </div>
+                    )}
+
+                    <div className="flex items-start gap-3">
+                      <div
+                        className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                          isSelected
+                            ? 'border-[#7dd3fc] bg-[#7dd3fc] text-[#001f2e]'
+                            : 'border-white/30'
+                        }`}
+                      >
+                        {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                      </div>
+                      <div>
+                        <span className="block text-sm sm:text-base font-bold text-white">
+                          {pkg.name}
+                        </span>
+                        <span className="block text-xs text-[#a0b4c4] mt-0.5">
+                          {pkg.subtitle}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-white/5 flex items-baseline justify-between">
+                      <div className="text-right">
+                        <span className="block text-xl font-black text-[#7dd3fc]">
+                          {pkg.price.toLocaleString('ar-DZ')} دج
+                        </span>
+                        <span className="block text-[11px] text-[#a0b4c4] line-through">
+                          {pkg.originalPrice.toLocaleString('ar-DZ')} دج
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-[#7dd3fc] bg-[#7dd3fc]/10 px-2 py-0.5 rounded">
+                        توصيل مجاني
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Customer Data Fields */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            {/* Full Name */}
+            <div className="space-y-1.5">
+              <label htmlFor="fullname" className="text-xs sm:text-sm font-bold text-white">
+                الاسم واللقب بالكامل *
+              </label>
+              <div className="relative">
+                <User className="absolute right-3.5 top-3.5 text-[#a0b4c4] w-5 h-5" />
+                <input
+                  id="fullname"
+                  type="text"
+                  required
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="مثال: كريم بن عيسى"
+                  className="w-full pr-11 pl-4 py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white placeholder-[#a0b4c4]/50 text-sm outline-none transition-all"
+                />
+              </div>
+            </div>
+
+            {/* Phone Number */}
+            <div className="space-y-1.5">
+              <label htmlFor="phone" className="text-xs sm:text-sm font-bold text-white">
+                رقم الهاتف (ضروري لتأكيد الشحن) *
+              </label>
+              <div className="relative">
+                <Phone className="absolute right-3.5 top-3.5 text-[#a0b4c4] w-5 h-5" />
+                <input
+                  id="phone"
+                  type="tel"
+                  required
+                  value={phone}
+                  onChange={(e) => {
+                    setPhone(e.target.value);
+                    if (phoneError) setPhoneError('');
+                  }}
+                  placeholder="06 / 07 / 05 XX XX XX XX"
+                  className="w-full pr-11 pl-4 py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white placeholder-[#a0b4c4]/50 text-sm outline-none transition-all dir-ltr text-right"
+                />
+              </div>
+              {phoneError && (
+                <p className="text-xs text-[#ff6b6b] mt-1">{phoneError}</p>
+              )}
+            </div>
+
+            {/* Wilaya Selection */}
+            <div className="space-y-1.5">
+              <label htmlFor="wilaya" className="text-xs sm:text-sm font-bold text-white">
+                الولاية (58 ولاية) *
+              </label>
+              <div className="relative">
+                <MapPin className="absolute right-3.5 top-3.5 text-[#a0b4c4] w-5 h-5" />
+                <select
+                  id="wilaya"
+                  required
+                  value={wilayaCode}
+                  onChange={(e) => setWilayaCode(e.target.value)}
+                  className="w-full pr-11 pl-4 py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white text-sm outline-none transition-all cursor-pointer appearance-none"
+                >
+                  <option value="" disabled className="bg-[#0f1524]">
+                    اختر ولايتك من القائمة...
+                  </option>
+                  {ALGERIA_WILAYAS.map((w) => (
+                    <option key={w.code} value={w.code} className="bg-[#0f1524]">
+                      {w.nameAr} ({w.nameFr})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Commune / Address */}
+            <div className="space-y-1.5">
+              <label htmlFor="address" className="text-xs sm:text-sm font-bold text-white">
+                البلدية أو العنوان التقريبي *
+              </label>
+              <div className="relative">
+                <Home className="absolute right-3.5 top-3.5 text-[#a0b4c4] w-5 h-5" />
+                <input
+                  id="address"
+                  type="text"
+                  required
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="مثال: بلدية درارية، قرب المسجد أو المدرسة"
+                  className="w-full pr-11 pl-4 py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white placeholder-[#a0b4c4]/50 text-sm outline-none transition-all"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Live Price Summary Box */}
+          <div className="p-5 rounded-2xl bg-[#0a0e1a]/70 border border-[#7dd3fc]/20 space-y-2.5 text-xs sm:text-sm shadow-inner">
+            <div className="flex justify-between items-center text-[#a0b4c4]">
+              <span>الباقة المختارة:</span>
+              <span className="font-bold text-white">{selectedPackage.name}</span>
+            </div>
+            <div className="flex justify-between items-center text-[#a0b4c4]">
+              <span>تكلفة التوصيل (جميع الولايات الـ 58):</span>
+              <span className="font-bold text-[#7dd3fc]">0 دج (مجاني تماماً 🚚)</span>
+            </div>
+            <div className="flex justify-between items-center text-[#a0b4c4]">
+              <span>طريقة الدفع:</span>
+              <span className="font-bold text-white">الدفع نقداً بعد المعاينة عند الاستلام</span>
+            </div>
+            <div className="pt-3 border-t border-[#2a3a48] flex justify-between items-center text-base sm:text-lg font-black text-white">
+              <span>المجموع الواجب دفعه عند الاستلام:</span>
+              <span className="text-[#7dd3fc] text-2xl">
+                {selectedPackage.price.toLocaleString('ar-DZ')} دج
+              </span>
+            </div>
+          </div>
+
+          {/* Radiant Submit Button */}
+          <button
+            id="submit-order-button"
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full py-4 sm:py-5 rounded-full bg-[#7dd3fc] hover:bg-[#c8eaff] text-[#001f2e] font-headline font-black text-base sm:text-xl tracking-wide shadow-[0_0_40px_rgba(125,211,252,0.4)] hover:shadow-[0_0_60px_rgba(125,211,252,0.6)] active:scale-[0.99] transition-all duration-300 flex items-center justify-center gap-3 disabled:opacity-75 cursor-pointer"
+          >
+            {isSubmitting ? (
+              <span className="inline-flex items-center gap-2">
+                <Sparkles className="w-5 h-5 animate-spin text-[#001f2e]" />
+                جاري إرسال طلبكم وتثبيته...
+              </span>
+            ) : (
+              <>
+                <ShoppingBag className="w-6 h-6" />
+                <span>تأكيد الطلب الآن - الدفع بعد المعاينة عند الاستلام</span>
+              </>
+            )}
+          </button>
+
+          {/* Security and Guarantee Footnotes */}
+          <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-[#a0b4c4] pt-2">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="text-[#7dd3fc] w-4 h-4" />
+              <span>ضمان أصالة المنتج 100%</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Lock className="text-[#7dd3fc] w-4 h-4" />
+              <span>بياناتكم محمية وسرية تماماً</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Headset className="text-[#7dd3fc] w-4 h-4" />
+              <span>خدمة عملاء ومتابعة بعد البيع 7/7</span>
+            </div>
+          </div>
+        </form>
+      </div>
+    </section>
+  );
+};
