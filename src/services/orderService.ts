@@ -4,51 +4,8 @@ const STORAGE_KEY = 'theoria_orders';
 const BROADCAST_CHANNEL_NAME = 'theoria_orders_channel';
 const ADMIN_TOKEN_KEY = 'theoria_admin_token';
 
-// Initial sample orders shown if localStorage is completely empty
-const DEFAULT_SEED_ORDERS: PlacedOrder[] = [
-  {
-    id: 'ord_1',
-    orderCode: 'TH-94821',
-    customerName: 'أمين كواشي',
-    phone: '0551234567',
-    wilaya: '16 - الجزائر العاصمة',
-    commune: 'باب الزوار، حي إسماعيل يفصح',
-    packageTitle: 'باقة الراحة الكاملة (جهازين Theoria)',
-    totalPrice: 16900,
-    date: '12 سبتمبر 2026',
-    createdAt: Date.now() - 1000 * 60 * 12,
-    status: 'جديد',
-    notes: 'يفضل الاتصال بعد الساعة 5 مساءً',
-  },
-  {
-    id: 'ord_2',
-    orderCode: 'TH-83149',
-    customerName: 'سارة مجاهدي',
-    phone: '0662345678',
-    wilaya: '31 - وهران',
-    commune: 'بئر الجير، بالقرب من الصيدلية المركزية',
-    packageTitle: 'الباقة الفردية (جهاز واحد Theoria)',
-    totalPrice: 9500,
-    date: '12 سبتمبر 2026',
-    createdAt: Date.now() - 1000 * 60 * 45,
-    status: 'تم التأكيد',
-    notes: 'تم تأكيد العنوان هاتفياً، جاهز للإرسال مع شركة ياليدين',
-  },
-  {
-    id: 'ord_3',
-    orderCode: 'TH-76290',
-    customerName: 'ياسين بوقرة',
-    phone: '0773456789',
-    wilaya: '25 - قسنطينة',
-    commune: 'المدينة الجديدة علي منجلي، الوحدة 14',
-    packageTitle: 'باقة العائلة والشركاء (3 أجهزة Theoria)',
-    totalPrice: 23900,
-    date: '11 سبتمبر 2026',
-    createdAt: Date.now() - 1000 * 60 * 60 * 22,
-    status: 'تم التسليم',
-    notes: 'تم التوصيل بنجاح واستلام المبلغ كاملاً',
-  },
-];
+// In production, no mock/fake seed orders - only real incoming customer orders
+const DEFAULT_SEED_ORDERS: PlacedOrder[] = [];
 
 export function getAdminToken(): string | null {
   try {
@@ -176,25 +133,34 @@ export function playOrderNotificationSound(): void {
 /**
  * Read local storage safely
  */
-function getLocalOrders(): PlacedOrder[] {
+export function getLocalOrders(): PlacedOrder[] {
   try {
     const local = localStorage.getItem(STORAGE_KEY);
     if (local) {
       const parsed = JSON.parse(local);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+      if (Array.isArray(parsed)) {
+        // Filter out any previous mock seed orders (ord_1, ord_2, ord_3) so merchant starts 100% clean
+        return parsed.filter((o) => o && o.id !== 'ord_1' && o.id !== 'ord_2' && o.id !== 'ord_3' && !o.notes?.includes('طلب تجريبي'));
       }
     }
   } catch {
     // ignore
   }
-  // Initialize with seed orders
+  return DEFAULT_SEED_ORDERS;
+}
+
+/**
+ * Clear all test / demo orders completely
+ */
+export function clearAllOrders(): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SEED_ORDERS));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+    if (channel) {
+      channel.postMessage({ type: 'ORDERS_CLEARED' });
+    }
   } catch {
     // ignore
   }
-  return DEFAULT_SEED_ORDERS;
 }
 
 /**
@@ -214,7 +180,11 @@ export async function getOrders(): Promise<PlacedOrder[]> {
       if (data.success && Array.isArray(data.orders)) {
         // Merge API orders with local orders (preserving any newly placed ones)
         const orderMap = new Map<string, PlacedOrder>();
-        data.orders.forEach((o: PlacedOrder) => orderMap.set(o.id || o.orderCode, o));
+        // Filter out mock IDs if any
+        data.orders
+          .filter((o: PlacedOrder) => o.id !== 'ord_1' && o.id !== 'ord_2' && o.id !== 'ord_3' && !o.notes?.includes('طلب تجريبي'))
+          .forEach((o: PlacedOrder) => orderMap.set(o.id || o.orderCode, o));
+
         localOrders.forEach((o: PlacedOrder) => {
           if (!orderMap.has(o.id || o.orderCode)) {
             orderMap.set(o.id || o.orderCode, o);
@@ -241,16 +211,16 @@ export async function getOrders(): Promise<PlacedOrder[]> {
  */
 export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<PlacedOrder> {
   const preparedOrder: PlacedOrder = {
-    id: orderData.id || `ord_${Date.now()}`,
+    id: orderData.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     orderCode: orderData.orderCode || `TH-${Math.floor(10000 + Math.random() * 90000)}`,
-    customerName: orderData.customerName || 'عميل مجهول',
-    phone: orderData.phone || '',
-    wilaya: orderData.wilaya || '',
-    commune: orderData.commune || '',
+    customerName: String(orderData.customerName || 'عميل').trim(),
+    phone: String(orderData.phone || '').replace(/\s+/g, ''),
+    wilaya: orderData.wilaya || 'غير محدد',
+    commune: String(orderData.commune || '').trim(),
     packageTitle: orderData.packageTitle || 'جهاز مساج Theoria',
-    totalPrice: orderData.totalPrice || 9500,
+    totalPrice: Number(orderData.totalPrice) || 9500,
     date: orderData.date || new Date().toLocaleDateString('ar-DZ', { year: 'numeric', month: 'long', day: 'numeric' }),
-    createdAt: Date.now(),
+    createdAt: orderData.createdAt || Date.now(),
     status: 'جديد',
     notes: orderData.notes || '',
   };
@@ -369,6 +339,7 @@ export function subscribeToRealtimeOrders(callbacks: {
   onUpdateOrder: (order: PlacedOrder) => void;
   onDeleteOrder: (orderId: string) => void;
   onConnectionChange?: (connected: boolean) => void;
+  onClearAll?: () => void;
 }): () => void {
   let isClosed = false;
   let eventSource: EventSource | null = null;
@@ -393,6 +364,9 @@ export function subscribeToRealtimeOrders(callbacks: {
     } else if (type === 'ORDER_DELETED' && id) {
       knownIds.delete(id);
       callbacks.onDeleteOrder(id);
+    } else if (type === 'ORDERS_CLEARED') {
+      knownIds.clear();
+      callbacks.onClearAll?.();
     }
   };
 
@@ -405,6 +379,11 @@ export function subscribeToRealtimeOrders(callbacks: {
     if (e.key === STORAGE_KEY && e.newValue) {
       try {
         const latest: PlacedOrder[] = JSON.parse(e.newValue);
+        if (latest.length === 0) {
+          knownIds.clear();
+          callbacks.onClearAll?.();
+          return;
+        }
         latest.forEach((order) => {
           const key = order.id || order.orderCode;
           if (!knownIds.has(key)) {

@@ -17,51 +17,9 @@ declare global {
   var __THEORIA_ORDERS__: any[] | undefined;
 }
 
+// In production, start with clean real orders only (no mock data)
 if (!global.__THEORIA_ORDERS__) {
-  global.__THEORIA_ORDERS__ = [
-    {
-      id: 'ord_1',
-      orderCode: 'TH-94821',
-      customerName: 'أمين كواشي',
-      phone: '0551234567',
-      wilaya: '16 - الجزائر العاصمة',
-      commune: 'باب الزوار، حي إسماعيل يفصح',
-      packageTitle: 'باقة الراحة الكاملة (جهازين Theoria)',
-      totalPrice: 16900,
-      date: '12 سبتمبر 2026',
-      createdAt: Date.now() - 1000 * 60 * 12,
-      status: 'جديد',
-      notes: 'يفضل الاتصال بعد الساعة 5 مساءً',
-    },
-    {
-      id: 'ord_2',
-      orderCode: 'TH-83149',
-      customerName: 'سارة مجاهدي',
-      phone: '0662345678',
-      wilaya: '31 - وهران',
-      commune: 'بئر الجير، بالقرب من الصيدلية المركزية',
-      packageTitle: 'الباقة الفردية (جهاز واحد Theoria)',
-      totalPrice: 9500,
-      date: '12 سبتمبر 2026',
-      createdAt: Date.now() - 1000 * 60 * 45,
-      status: 'تم التأكيد',
-      notes: 'تم تأكيد العنوان هاتفياً، جاهز للإرسال مع شركة ياليدين',
-    },
-    {
-      id: 'ord_3',
-      orderCode: 'TH-76290',
-      customerName: 'ياسين بوقرة',
-      phone: '0773456789',
-      wilaya: '25 - قسنطينة',
-      commune: 'المدينة الجديدة علي منجلي، الوحدة 14',
-      packageTitle: 'باقة العائلة والشركاء (3 أجهزة Theoria)',
-      totalPrice: 23900,
-      date: '11 سبتمبر 2026',
-      createdAt: Date.now() - 1000 * 60 * 60 * 22,
-      status: 'تم التسليم',
-      notes: 'تم التوصيل بنجاح واستلام المبلغ كاملاً',
-    },
-  ];
+  global.__THEORIA_ORDERS__ = [];
 }
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
@@ -94,17 +52,20 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ success: false, error: 'Customer name and phone are required' });
     }
 
+    // Sanitize and clean phone
+    const cleanPhone = String(body.phone).replace(/\s+/g, '');
+
     const newOrder = {
-      id: body.id || `ord_${Date.now()}`,
+      id: body.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       orderCode: body.orderCode || `TH-${Math.floor(10000 + Math.random() * 90000)}`,
-      customerName: body.customerName,
-      phone: body.phone,
+      customerName: String(body.customerName).trim(),
+      phone: cleanPhone,
       wilaya: body.wilaya || 'غير محدد',
-      commune: body.commune || '',
+      commune: String(body.commune || '').trim(),
       packageTitle: body.packageTitle || 'جهاز مساج Theoria',
       totalPrice: Number(body.totalPrice) || 9500,
       date: body.date || new Date().toLocaleDateString('ar-DZ', { year: 'numeric', month: 'long', day: 'numeric' }),
-      createdAt: Date.now(),
+      createdAt: body.createdAt || Date.now(),
       status: 'جديد',
       notes: body.notes || '',
     };

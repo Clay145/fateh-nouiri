@@ -34,13 +34,32 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validate Algerian phone number
-    const cleanPhone = phone.replace(/\s+/g, '');
-    const algerianPhoneRegex = /^(05|06|07|02)[0-9]{8}$/;
-    if (!algerianPhoneRegex.test(cleanPhone)) {
-      setPhoneError('يرجى إدخال رقم هاتف جزائري صالح يبدأ بـ 05 أو 06 أو 07 مكون من 10 أرقام');
+    // Clean input
+    const cleanName = fullName.trim();
+    if (cleanName.length < 3) {
+      setPhoneError('يرجى كتابة الاسم واللقب بشكل كامل');
       return;
     }
+
+    // Validate Algerian phone number (remove spaces, dashes, dots)
+    const cleanPhone = phone.replace(/[\s\-\.\(\)]/g, '').trim();
+    const algerianPhoneRegex = /^(05|06|07|02)[0-9]{8}$/;
+    if (!algerianPhoneRegex.test(cleanPhone)) {
+      setPhoneError('يرجى إدخال رقم هاتف جزائري صحيح مكون من 10 أرقام (مثال: 0550123456 أو 0661123456)');
+      return;
+    }
+
+    if (!wilayaCode) {
+      setPhoneError('يرجى اختيار الولاية من القائمة');
+      return;
+    }
+
+    const cleanAddress = address.trim();
+    if (cleanAddress.length < 2) {
+      setPhoneError('يرجى تحديد البلدية أو الحي لضمان دقة التوصيل');
+      return;
+    }
+
     setPhoneError('');
 
     const selectedWilayaObj = ALGERIA_WILAYAS.find((w) => w.code === wilayaCode);
@@ -49,12 +68,12 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
     setIsSubmitting(true);
 
     const placedData: Partial<PlacedOrder> = {
-      id: Date.now().toString(),
+      id: `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       orderCode: `TH-${Math.floor(10000 + Math.random() * 90000)}`,
-      customerName: fullName,
+      customerName: cleanName,
       phone: cleanPhone,
       wilaya: wilayaName,
-      commune: address,
+      commune: cleanAddress,
       packageTitle: selectedPackage.name,
       totalPrice: selectedPackage.price,
       date: new Date().toLocaleDateString('ar-DZ', {

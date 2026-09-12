@@ -20,77 +20,8 @@ interface OrderItem {
 
 const DATA_FILE = path.join(process.cwd(), 'orders_data.json');
 
-// Initial seed orders for realistic dashboard demo
-const INITIAL_ORDERS: OrderItem[] = [
-  {
-    id: 'ord_1',
-    orderCode: 'TH-94821',
-    customerName: 'أمين كواشي',
-    phone: '0551234567',
-    wilaya: '16 - الجزائر العاصمة',
-    commune: 'باب الزوار، حي إسماعيل يفصح',
-    packageTitle: 'باقة الراحة الكاملة (جهازين Theoria)',
-    totalPrice: 16900,
-    date: '12 سبتمبر 2026',
-    createdAt: Date.now() - 1000 * 60 * 12, // 12 minutes ago
-    status: 'جديد',
-    notes: 'يفضل الاتصال بعد الساعة 5 مساءً',
-  },
-  {
-    id: 'ord_2',
-    orderCode: 'TH-83149',
-    customerName: 'سارة مجاهدي',
-    phone: '0662345678',
-    wilaya: '31 - وهران',
-    commune: 'بئر الجير، بالقرب من الصيدلية المركزية',
-    packageTitle: 'الباقة الفردية (جهاز واحد Theoria)',
-    totalPrice: 9500,
-    date: '12 سبتمبر 2026',
-    createdAt: Date.now() - 1000 * 60 * 45, // 45 minutes ago
-    status: 'تم التأكيد',
-    notes: 'تم تأكيد العنوان هاتفياً، جاهز للإرسال مع شركة ياليدين',
-  },
-  {
-    id: 'ord_3',
-    orderCode: 'TH-76290',
-    customerName: 'ياسين بوقرة',
-    phone: '0773456789',
-    wilaya: '25 - قسنطينة',
-    commune: 'المدينة الجديدة علي منجلي، الوحدة 14',
-    packageTitle: 'باقة العائلة والشركاء (3 أجهزة Theoria)',
-    totalPrice: 23500,
-    date: '12 سبتمبر 2026',
-    createdAt: Date.now() - 1000 * 60 * 180, // 3 hours ago
-    status: 'قيد التوصيل',
-    notes: 'رقم بوليصة الشحن: YAL-8492048',
-  },
-  {
-    id: 'ord_4',
-    orderCode: 'TH-61543',
-    customerName: 'نادية بن سالم',
-    phone: '0555678912',
-    wilaya: '19 - سطيف',
-    commune: 'حي 1014 مسكن عمارة C',
-    packageTitle: 'الباقة الفردية (جهاز واحد Theoria)',
-    totalPrice: 9500,
-    date: '11 سبتمبر 2026',
-    createdAt: Date.now() - 1000 * 60 * 60 * 20,
-    status: 'تم التسليم',
-  },
-  {
-    id: 'ord_5',
-    orderCode: 'TH-50912',
-    customerName: 'محمد بوعبد الله',
-    phone: '0669876543',
-    wilaya: '09 - البليدة',
-    commune: 'أولاد يعيش، وسط المدينة',
-    packageTitle: 'الباقة الفردية (جهاز واحد Theoria)',
-    totalPrice: 9500,
-    date: '11 سبتمبر 2026',
-    createdAt: Date.now() - 1000 * 60 * 60 * 28,
-    status: 'تم التسليم',
-  },
-];
+// Real customer orders only (no fake demo orders)
+const INITIAL_ORDERS: OrderItem[] = [];
 
 let orders: OrderItem[] = [];
 

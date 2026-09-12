@@ -8,6 +8,7 @@ import {
   submitOrder,
   subscribeToRealtimeOrders,
   playOrderNotificationSound,
+  clearAllOrders,
 } from '../services/orderService';
 import {
   ShieldAlert,
@@ -36,6 +37,8 @@ import {
   AlertCircle,
   FileSpreadsheet,
   LogOut,
+  Copy,
+  CheckCheck,
 } from 'lucide-react';
 import { removeAdminToken } from '../services/orderService';
 
@@ -71,6 +74,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
   // Active editing note order
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [tempNoteText, setTempNoteText] = useState('');
+  const [copiedPhoneId, setCopiedPhoneId] = useState<string | null>(null);
+
+  const copyPhoneNumber = (phone: string, id: string) => {
+    navigator.clipboard.writeText(phone);
+    setCopiedPhoneId(id);
+    setTimeout(() => setCopiedPhoneId(null), 2000);
+  };
 
   // Initial fetch
   const loadInitialOrders = async () => {
@@ -144,22 +154,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
     }
   };
 
-  // Trigger Sample Real-Time Order for testing
-  const handleCreateTestOrder = async () => {
-    const randomWilaya = ALGERIA_WILAYAS[Math.floor(Math.random() * ALGERIA_WILAYAS.length)];
-    const names = ['سفيان بن علي', 'إيمان بلقاسم', 'حمزة زروقي', 'ليلى مرابط', 'عبد القادر شريف', 'مريم حداد'];
-    const randomName = names[Math.floor(Math.random() * names.length)];
-    const randomPhone = `05${Math.floor(10000000 + Math.random() * 89999999)}`;
-
-    await submitOrder({
-      customerName: randomName,
-      phone: randomPhone,
-      wilaya: `${randomWilaya.code} - ${randomWilaya.nameAr}`,
-      commune: `وسط مدينة ${randomWilaya.nameAr}`,
-      packageTitle: 'الباقة الفردية (جهاز واحد Theoria)',
-      totalPrice: 9500,
-      notes: 'طلب تجريبي سريع لاختبار البث الحي في لوحة التحكم',
-    });
+  // Clear All Demo/Old Orders Handler to keep database 100% clean for real ad campaign
+  const handleClearDemoOrders = () => {
+    if (window.confirm('هل تريد تصفير الطلبات التجريبية والبدء بصفحة نظيفة للطلبات الحقيقية فقط؟')) {
+      clearAllOrders();
+      setOrders([]);
+    }
   };
 
   // Submit Manual Order
@@ -374,16 +374,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
             <span className="hidden sm:inline">{soundEnabled ? 'التنبيه الصوتي شغال' : 'كتم الصوت'}</span>
           </button>
 
-          {/* Test Order Trigger Button */}
-          <button
-            onClick={handleCreateTestOrder}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/30 hover:bg-purple-500/25 transition"
-            title="محاكاة طلب جديد لاختبار وصول البيانات لحظياً"
-          >
-            <Radio className="w-4 h-4 text-purple-400 animate-pulse" />
-            <span className="hidden sm:inline">تجربة طلب حي</span>
-          </button>
-
           {/* Refresh button */}
           <button
             onClick={loadInitialOrders}
@@ -536,6 +526,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
                 <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
                 <span>تصدير Excel (CSV)</span>
               </button>
+
+              {orders.length > 0 && (
+                <button
+                  onClick={handleClearDemoOrders}
+                  className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-red-400 bg-slate-800/40 hover:bg-red-500/10 border border-slate-700/60 hover:border-red-500/30 transition"
+                  title="تصفير القائمة والتخلص من أي طلبات تجريبية سابقة"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>تصفير القائمة</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -675,12 +676,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
                           <div className="flex items-center gap-2 mt-1">
                             <a
                               href={`tel:${order.phone}`}
-                              className="font-mono text-xs text-[#7dd3fc] hover:underline flex items-center gap-1"
+                              className="font-mono text-xs text-[#7dd3fc] hover:underline flex items-center gap-1 font-semibold"
                               dir="ltr"
+                              title="اتصال مباشر"
                             >
                               <Phone className="w-3 h-3" />
                               {order.phone}
                             </a>
+                            <button
+                              onClick={() => copyPhoneNumber(order.phone, order.id)}
+                              className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition"
+                              title="نسخ رقم الهاتف لتفادي أي خطأ كتابي"
+                            >
+                              {copiedPhoneId === order.id ? (
+                                <CheckCheck className="w-3 h-3 text-emerald-400" />
+                              ) : (
+                                <Copy className="w-3 h-3" />
+                              )}
+                            </button>
                           </div>
                         </td>
 
