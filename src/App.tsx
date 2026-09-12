@@ -40,34 +40,45 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const handleHash = () => {
-      if (window.location.hash === '#admin') {
+    const checkAdminRoute = () => {
+      const hash = window.location.hash;
+      const pathname = window.location.pathname;
+      if (hash === '#admin' || pathname === '/admin' || hash === '#/admin') {
         setViewMode('admin');
-      } else if (window.location.hash === '#store' || window.location.hash === '') {
+      } else {
         setViewMode('store');
       }
     };
 
-    handleHash();
-    window.addEventListener('hashchange', handleHash);
-    return () => window.removeEventListener('hashchange', handleHash);
+    checkAdminRoute();
+    window.addEventListener('hashchange', checkAdminRoute);
+    window.addEventListener('popstate', checkAdminRoute);
+    return () => {
+      window.removeEventListener('hashchange', checkAdminRoute);
+      window.removeEventListener('popstate', checkAdminRoute);
+    };
   }, []);
-
-  const handleOpenAdmin = () => {
-    setViewMode('admin');
-    window.location.hash = 'admin';
-  };
 
   const handleExitAdmin = () => {
     setViewMode('store');
-    window.location.hash = '';
+    if (window.location.hash) {
+      window.location.hash = '';
+    }
+    if (window.location.pathname === '/admin') {
+      window.history.pushState(null, '', '/');
+    }
   };
 
   const handleAdminLogout = () => {
     removeAdminToken();
     setIsAdminAuthenticated(false);
     setViewMode('store');
-    window.location.hash = '';
+    if (window.location.hash) {
+      window.location.hash = '';
+    }
+    if (window.location.pathname === '/admin') {
+      window.history.pushState(null, '', '/');
+    }
   };
 
   const handleOrderSuccess = (order: PlacedOrder) => {
@@ -133,8 +144,8 @@ export default function App() {
         <OrderSection onOrderSuccess={handleOrderSuccess} />
       </main>
 
-      {/* Footer with secure admin lock shortcut */}
-      <Footer onOpenAdmin={handleOpenAdmin} />
+      {/* Footer */}
+      <Footer />
 
       {/* Mobile Sticky Quick Order Bar */}
       <FloatingMobileBar />
