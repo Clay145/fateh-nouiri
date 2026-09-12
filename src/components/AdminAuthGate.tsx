@@ -74,7 +74,7 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({ onAuthenticated, o
           <div>
             <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center justify-between">
               <span>كلمة مرور المشرف</span>
-              <span className="text-[11px] text-slate-500 font-normal">الافتراضية: theoria2026</span>
+              <span className="text-[11px] text-slate-500 font-normal">theoria2026 أو IMAD34</span>
             </label>
             <div className="relative">
               <input

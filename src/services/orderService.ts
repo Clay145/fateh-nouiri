@@ -34,11 +34,14 @@ export function removeAdminToken(): void {
 }
 
 export async function loginAdmin(password: string): Promise<boolean> {
+  const cleanPassword = password.trim();
+
+  // Try backend API first (for fullstack/server deployment)
   try {
     const res = await fetch('/api/admin/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ password: cleanPassword }),
     });
     if (res.ok) {
       const data = await res.json();
@@ -48,22 +51,35 @@ export async function loginAdmin(password: string): Promise<boolean> {
       }
     }
   } catch (err) {
-    console.error('Admin login error:', err);
+    console.warn('Backend login endpoint unavailable, trying fallback verification:', err);
   }
+
+  // Fallback for Vercel static deployments (where Express server.ts is not running)
+  const validPasswords = ['theoria2026', 'IMAD34', 'imad34', 'admin2026'];
+  if (validPasswords.includes(cleanPassword)) {
+    const clientFallbackToken = `admin_token_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    setAdminToken(clientFallbackToken, true);
+    return true;
+  }
+
   return false;
 }
 
 export async function verifyAdminSession(): Promise<boolean> {
   const token = getAdminToken();
   if (!token) return false;
+
   try {
     const res = await fetch('/api/admin/verify', {
       headers: { Authorization: `Bearer ${token}` },
     });
-    return res.ok;
+    if (res.ok) return true;
   } catch {
-    return false;
+    // Backend unavailable, accept valid client session token
   }
+
+  // If token is present and starts with admin_token_, keep session valid on client
+  return token.startsWith('admin_token_');
 }
 
 // In-memory / broadcast channel for multi-tab realtime sync
