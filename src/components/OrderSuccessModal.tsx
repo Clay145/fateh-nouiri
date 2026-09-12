@@ -102,13 +102,13 @@ export const OrderSuccessModal: React.FC<OrderSuccessModalProps> = ({ order, onC
         {/* Action Buttons */}
         <div className="space-y-2.5 pt-2">
           <a
-            href={`https://wa.me/213550000000?text=${whatsappMessage}`}
+            href={`https://wa.me/213552535275?text=${whatsappMessage}`}
             target="_blank"
             rel="noopener noreferrer"
             className="w-full py-3.5 rounded-full bg-[#25D366] hover:bg-[#20bd5a] text-black font-black text-sm flex items-center justify-center gap-2 shadow-lg transition-all"
           >
             <PhoneCall className="w-4 h-4" />
-            <span>تأكيد أسرع عبر الواتساب (اختياري)</span>
+            <span>تأكيد أسرع عبر الواتساب: 0552535275 (اختياري)</span>
           </a>
 
           <button
