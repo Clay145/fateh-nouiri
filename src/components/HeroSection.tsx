@@ -1,5 +1,6 @@
 import React from 'react';
 import { ASSETS } from '../data/constants';
+import { trackAddToCartClick, trackFormOpened } from '../services/analyticsService';
 import {
   ArrowLeft,
   BarChart3,
@@ -74,6 +75,10 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             <a
               id="hero-order-cta"
               href="#order-form"
+              onClick={() => {
+                trackAddToCartClick('زر الهيرو الرئيسي - اطلب الآن');
+                trackFormOpened('نقر زر الهيرو');
+              }}
               className="inline-flex items-center justify-center gap-2.5 sm:gap-3 px-6 sm:px-8 py-3.5 sm:py-4 rounded-full bg-[#7dd3fc] text-[#001f2e] font-headline font-black text-sm sm:text-base shadow-[0_0_35px_rgba(125,211,252,0.35)] hover:shadow-[0_0_45px_rgba(125,211,252,0.6)] hover:bg-[#c8eaff] transition-all duration-300 transform active:scale-95 text-center"
             >
               <span>اطلب الآن والدفع عند الاستلام</span>

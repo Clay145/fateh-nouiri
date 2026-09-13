@@ -17,6 +17,7 @@ import { AdminDashboard } from './components/AdminDashboard';
 import { AdminAuthGate } from './components/AdminAuthGate';
 import { PlacedOrder } from './types';
 import { verifyAdminSession, removeAdminToken } from './services/orderService';
+import { trackPageViewVisitor, trackContentEngagement } from './services/analyticsService';
 
 export default function App() {
   const [viewMode, setViewMode] = useState<'store' | 'admin'>('store');
@@ -38,6 +39,22 @@ export default function App() {
     }
     checkAuth();
   }, []);
+
+  // Track visitor page view and content engagement on landing page
+  useEffect(() => {
+    if (viewMode === 'store') {
+      trackPageViewVisitor();
+
+      const handleScroll = () => {
+        if (window.scrollY > 400) {
+          trackContentEngagement();
+          window.removeEventListener('scroll', handleScroll);
+        }
+      };
+      window.addEventListener('scroll', handleScroll, { passive: true });
+      return () => window.removeEventListener('scroll', handleScroll);
+    }
+  }, [viewMode]);
 
   useEffect(() => {
     const checkAdminRoute = () => {

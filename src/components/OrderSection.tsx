@@ -1,9 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { STORE_PACKAGES } from '../data/packages';
 import { ALGERIA_WILAYAS } from '../data/wilayas';
 import { PackageOption, PlacedOrder } from '../types';
-import { trackPixelEvent } from '../utils/pixel';
 import { submitOrder } from '../services/orderService';
+import {
+  trackAddToCartClick,
+  trackFormOpened,
+  trackFormFieldEngagement,
+  trackValidationFailed,
+  trackPurchaseComplete,
+} from '../services/analyticsService';
 import {
   AlarmClock,
   ShoppingBag,
@@ -30,6 +36,27 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
   const [address, setAddress] = useState('');
   const [phoneError, setPhoneError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const sectionRef = useRef<HTMLElement | null>(null);
+
+  // Trigger fbq('track', 'InitiateCheckout') when the order form enters the screen
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            trackFormOpened('وصول الزائر لاستمارة الطلب');
+          }
+        });
+      },
+      { threshold: 0.15 }
+    );
+
+    if (sectionRef.current) {
+      observer.observe(sectionRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,7 +64,9 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
     // Clean input
     const cleanName = fullName.trim();
     if (cleanName.length < 3) {
-      setPhoneError('يرجى كتابة الاسم واللقب بشكل كامل');
+      const err = 'يرجى كتابة الاسم واللقب بشكل كامل';
+      setPhoneError(err);
+      trackValidationFailed('الاسم ناقص أو فارغ');
       return;
     }
 
@@ -45,18 +74,24 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
     const cleanPhone = phone.replace(/[\s\-\.\(\)]/g, '').trim();
     const algerianPhoneRegex = /^(05|06|07|02)[0-9]{8}$/;
     if (!algerianPhoneRegex.test(cleanPhone)) {
-      setPhoneError('يرجى إدخال رقم هاتف جزائري صحيح مكون من 10 أرقام (مثال: 0550123456 أو 0661123456)');
+      const err = 'يرجى إدخال رقم هاتف جزائري صحيح مكون من 10 أرقام (مثال: 0550123456 أو 0661123456)';
+      setPhoneError(err);
+      trackValidationFailed('رقم هاتف جزائري غير صالح');
       return;
     }
 
     if (!wilayaCode) {
-      setPhoneError('يرجى اختيار الولاية من القائمة');
+      const err = 'يرجى اختيار الولاية من القائمة';
+      setPhoneError(err);
+      trackValidationFailed('لم يتم اختيار الولاية');
       return;
     }
 
     const cleanAddress = address.trim();
     if (cleanAddress.length < 2) {
-      setPhoneError('يرجى تحديد البلدية أو الحي لضمان دقة التوصيل');
+      const err = 'يرجى تحديد البلدية أو الحي لضمان دقة التوصيل';
+      setPhoneError(err);
+      trackValidationFailed('البلدية أو العنوان فارغ');
       return;
     }
 
@@ -86,13 +121,8 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
 
     submitOrder(placedData)
       .then((savedOrder) => {
-        // Fire Meta Pixel Purchase conversion event
-        trackPixelEvent('Purchase', {
-          value: selectedPackage.price,
-          currency: 'DZD',
-          content_name: selectedPackage.name,
-          order_id: savedOrder.orderCode,
-        });
+        // Track Pixel Purchase and Funnel Success
+        trackPurchaseComplete(savedOrder.orderCode, selectedPackage.price, selectedPackage.name);
 
         setIsSubmitting(false);
         onOrderSuccess(savedOrder);
@@ -100,13 +130,18 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
       .catch(() => {
         // Fallback in case of unexpected promise error
         const fallbackOrder = placedData as PlacedOrder;
+        trackPurchaseComplete(fallbackOrder.orderCode, selectedPackage.price, selectedPackage.name);
         setIsSubmitting(false);
         onOrderSuccess(fallbackOrder);
       });
   };
 
   return (
-    <section id="order-form" className="py-12 sm:py-24 px-4 sm:px-6 lg:px-12 max-w-5xl mx-auto w-full overflow-hidden">
+    <section
+      id="order-form"
+      ref={sectionRef}
+      className="py-12 sm:py-24 px-4 sm:px-6 lg:px-12 max-w-5xl mx-auto w-full overflow-hidden"
+    >
       <div className="bg-[#141c2e]/80 backdrop-blur-2xl border-2 border-[#7dd3fc]/30 rounded-3xl p-4 sm:p-10 lg:p-12 shadow-[0_0_60px_rgba(125,211,252,0.15)] relative overflow-hidden">
         {/* Accent Glow Corner */}
         <div className="absolute -top-24 -right-24 w-60 h-60 bg-[#7dd3fc]/20 rounded-full blur-3xl pointer-events-none max-w-full"></div>
@@ -141,7 +176,10 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                   <div
                     key={pkg.id}
                     id={`package-option-${pkg.id}`}
-                    onClick={() => setSelectedPackage(pkg)}
+                    onClick={() => {
+                      setSelectedPackage(pkg);
+                      trackAddToCartClick(`اختيار باقة: ${pkg.name}`);
+                    }}
                     className={`relative p-3.5 sm:p-5 rounded-2xl border-2 cursor-pointer transition-all duration-300 flex flex-col justify-between ${
                       isSelected
                         ? 'border-[#7dd3fc] bg-[#0e4d6e]/25 shadow-[0_0_25px_rgba(125,211,252,0.2)]'
@@ -207,7 +245,11 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                   type="text"
                   required
                   value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
+                  onFocus={() => trackFormFieldEngagement('fullname')}
+                  onChange={(e) => {
+                    setFullName(e.target.value);
+                    trackFormFieldEngagement('fullname');
+                  }}
                   placeholder="مثال: كريم بن عيسى"
                   className="w-full pr-11 pl-4 py-3 sm:py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white placeholder-[#a0b4c4]/50 text-sm outline-none transition-all box-border"
                 />
@@ -226,8 +268,10 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                   type="tel"
                   required
                   value={phone}
+                  onFocus={() => trackFormFieldEngagement('phone')}
                   onChange={(e) => {
                     setPhone(e.target.value);
+                    trackFormFieldEngagement('phone');
                     if (phoneError) setPhoneError('');
                   }}
                   placeholder="06 / 07 / 05 XX XX XX XX"
@@ -250,7 +294,11 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                   id="wilaya"
                   required
                   value={wilayaCode}
-                  onChange={(e) => setWilayaCode(e.target.value)}
+                  onFocus={() => trackFormFieldEngagement('wilaya')}
+                  onChange={(e) => {
+                    setWilayaCode(e.target.value);
+                    trackFormFieldEngagement('wilaya');
+                  }}
                   className="w-full pr-11 pl-4 py-3 sm:py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white text-sm outline-none transition-all cursor-pointer appearance-none box-border"
                 >
                   <option value="" disabled className="bg-[#0f1524]">
@@ -277,7 +325,11 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                   type="text"
                   required
                   value={address}
-                  onChange={(e) => setAddress(e.target.value)}
+                  onFocus={() => trackFormFieldEngagement('address')}
+                  onChange={(e) => {
+                    setAddress(e.target.value);
+                    trackFormFieldEngagement('address');
+                  }}
                   placeholder="مثال: بلدية درارية، قرب المسجد أو المدرسة"
                   className="w-full pr-11 pl-4 py-3 sm:py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white placeholder-[#a0b4c4]/50 text-sm outline-none transition-all box-border"
                 />

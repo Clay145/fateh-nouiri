@@ -41,6 +41,7 @@ import {
   CheckCheck,
 } from 'lucide-react';
 import { removeAdminToken } from '../services/orderService';
+import { FunnelAnalyticsView } from './FunnelAnalyticsView';
 
 interface AdminDashboardProps {
   onExitDashboard: () => void;
@@ -48,6 +49,7 @@ interface AdminDashboardProps {
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard, onLogout }) => {
+  const [activeTab, setActiveTab] = useState<'orders' | 'funnel'>('orders');
   const [orders, setOrders] = useState<PlacedOrder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
@@ -412,9 +414,51 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
       </header>
 
       {/* Main Content Area */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        {/* KPI Cards Grid */}
-        <section className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
+        {/* Navigation Tabs Bar */}
+        <div className="flex flex-wrap items-center gap-2.5 border-b border-slate-850 pb-4">
+          <button
+            onClick={() => setActiveTab('orders')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer ${
+              activeTab === 'orders'
+                ? 'bg-[#7dd3fc] text-slate-950 shadow-[0_0_20px_rgba(125,211,252,0.3)]'
+                : 'bg-slate-850/80 text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-800'
+            }`}
+          >
+            <Package className="w-4 h-4" />
+            <span>إدارة وتأكيد الطلبات</span>
+            <span
+              className={`px-2 py-0.5 rounded-full text-[11px] font-mono ${
+                activeTab === 'orders' ? 'bg-slate-950 text-white' : 'bg-slate-700 text-slate-200'
+              }`}
+            >
+              {orders.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('funnel')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer ${
+              activeTab === 'funnel'
+                ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-[0_0_25px_rgba(147,51,234,0.4)]'
+                : 'bg-slate-850/80 text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-800'
+            }`}
+          >
+            <TrendingUp className="w-4 h-4" />
+            <span>تتبع الزوار ومسار الشراء (Pixel & Funnel)</span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+              مباشر
+            </span>
+          </button>
+        </div>
+
+        {activeTab === 'funnel' ? (
+          <FunnelAnalyticsView />
+        ) : (
+          <>
+            {/* KPI Cards Grid */}
+            <section className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           {/* Total Revenue */}
           <div className="bg-[#0f172a]/80 backdrop-blur border border-slate-800/80 rounded-2xl p-5 relative overflow-hidden group hover:border-[#7dd3fc]/40 transition">
             <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/10 rounded-full blur-2xl pointer-events-none"></div>
@@ -821,6 +865,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
             </div>
           )}
         </section>
+        </>
+      )}
       </main>
 
       {/* Manual Order Modal */}

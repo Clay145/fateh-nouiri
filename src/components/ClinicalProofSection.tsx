@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ASSETS } from '../data/constants';
 import { FlaskConical, ArrowLeft, CheckCircle2, TrendingDown, TrendingUp } from 'lucide-react';
+import { trackAddToCartClick, trackFormOpened } from '../services/analyticsService';
 
 export const ClinicalProofSection: React.FC = () => {
   const [selectedView, setSelectedView] = useState<'chart' | 'comparison'>('chart');
@@ -54,6 +55,10 @@ export const ClinicalProofSection: React.FC = () => {
             <div className="pt-2 flex flex-wrap items-center gap-3 sm:gap-4">
               <a
                 href="#order-form"
+                onClick={() => {
+                  trackAddToCartClick('قسم الإثبات العلمي - زر جرّب الفرق');
+                  trackFormOpened('نقر رابط الإثبات العلمي');
+                }}
                 className="text-[#7dd3fc] hover:text-[#c8eaff] font-bold text-xs sm:text-sm inline-flex items-center gap-1.5 sm:gap-2 group"
               >
                 <span>جرّب الفرق بنفسك اليوم دون مخاطرة</span>

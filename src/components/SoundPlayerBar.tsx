@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { relaxAudio } from '../utils/soundEngine';
 import { Volume2, VolumeX, Waves, CloudRain, Sparkles, X } from 'lucide-react';
+import { trackAddToCartClick, trackFormOpened } from '../services/analyticsService';
 
 interface SoundPlayerBarProps {
   isOpen: boolean;
@@ -152,6 +153,8 @@ export const SoundPlayerBar: React.FC<SoundPlayerBarProps> = ({
         <div className="mt-6">
           <button
             onClick={() => {
+              trackAddToCartClick('مشغل الصوت الاسترخائي - زر الطلب');
+              trackFormOpened('نقر مشغل الصوت');
               onClose();
               const el = document.getElementById('order-form');
               el?.scrollIntoView({ behavior: 'smooth' });
