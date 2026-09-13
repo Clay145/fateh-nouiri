@@ -1,0 +1,22 @@
+{
+  "totalVisitors": 0,
+  "contentEngaged": 0,
+  "clickedAddToCart": 0,
+  "reachedCheckoutForm": 0,
+  "startedFillingForm": 0,
+  "validationFailed": 0,
+  "completedPurchases": 0,
+  "fieldDropOffs": {
+    "fullname": 0,
+    "phone": 0,
+    "wilaya": 0,
+    "address": 0
+  },
+  "devices": {
+    "mobile": 0,
+    "desktop": 0
+  },
+  "sources": {},
+  "lastUpdated": 1789304861802,
+  "recentSessions": []
+}

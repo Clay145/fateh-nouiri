@@ -19,11 +19,95 @@ interface OrderItem {
 }
 
 const DATA_FILE = path.join(process.cwd(), 'orders_data.json');
+const ANALYTICS_FILE = path.join(process.cwd(), 'analytics_data.json');
 
 // Real customer orders only (no fake demo orders)
 const INITIAL_ORDERS: OrderItem[] = [];
 
 let orders: OrderItem[] = [];
+
+interface VisitorSession {
+  id: string;
+  startTime: number;
+  lastActiveTime: number;
+  source: string;
+  device: 'هاتف محمول' | 'كمبيوتر';
+  furthestStep: string;
+  lastActiveField?: 'fullname' | 'phone' | 'wilaya' | 'address';
+  validationErrorsCount: number;
+  selectedPackage?: string;
+  orderCompleted?: boolean;
+}
+
+interface FunnelStats {
+  totalVisitors: number;
+  contentEngaged: number;
+  clickedAddToCart: number;
+  reachedCheckoutForm: number;
+  startedFillingForm: number;
+  validationFailed: number;
+  completedPurchases: number;
+  fieldDropOffs: {
+    fullname: number;
+    phone: number;
+    wilaya: number;
+    address: number;
+  };
+  devices: {
+    mobile: number;
+    desktop: number;
+  };
+  sources: Record<string, number>;
+  lastUpdated: number;
+  recentSessions: VisitorSession[];
+}
+
+function getInitialAnalytics(): FunnelStats {
+  return {
+    totalVisitors: 0,
+    contentEngaged: 0,
+    clickedAddToCart: 0,
+    reachedCheckoutForm: 0,
+    startedFillingForm: 0,
+    validationFailed: 0,
+    completedPurchases: 0,
+    fieldDropOffs: { fullname: 0, phone: 0, wilaya: 0, address: 0 },
+    devices: { mobile: 0, desktop: 0 },
+    sources: {},
+    lastUpdated: Date.now(),
+    recentSessions: [],
+  };
+}
+
+let funnelStats: FunnelStats = getInitialAnalytics();
+
+function loadAnalytics(): void {
+  try {
+    if (fs.existsSync(ANALYTICS_FILE)) {
+      const content = fs.readFileSync(ANALYTICS_FILE, 'utf-8');
+      const parsed = JSON.parse(content);
+      if (parsed && typeof parsed.totalVisitors === 'number') {
+        funnelStats = parsed;
+        return;
+      }
+    }
+    funnelStats = getInitialAnalytics();
+    fs.writeFileSync(ANALYTICS_FILE, JSON.stringify(funnelStats, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error reading analytics file:', err);
+    funnelStats = getInitialAnalytics();
+  }
+}
+
+function persistAnalytics(): void {
+  try {
+    fs.writeFileSync(ANALYTICS_FILE, JSON.stringify(funnelStats, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving analytics file:', err);
+  }
+}
+
+loadAnalytics();
 
 // Load or save orders
 function loadOrders(): void {
@@ -135,16 +219,17 @@ async function startServer() {
 
   // Real-time Server-Sent Events stream for Admin Dashboard (protected)
   app.get('/api/orders/stream', (req: Request, res: Response) => {
-    const token = req.query.token as string;
-    if (!isValidAdminToken(token)) {
-      return res.status(401).json({ success: false, error: 'Unauthorized SSE stream' });
-    }
-
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
+
+    const token = req.query.token as string;
+    if (!isValidAdminToken(token)) {
+      res.write(`data: ${JSON.stringify({ type: 'UNAUTHORIZED', error: 'Authentication required' })}\n\n`);
+      return res.end();
+    }
 
     const clientId = Date.now() + Math.random();
     sseClients.push({ id: clientId, res });
@@ -197,8 +282,21 @@ async function startServer() {
     orders.unshift(newOrder);
     persistOrders();
 
+    // Auto-update funnel analytics with purchase
+    funnelStats.completedPurchases = (funnelStats.completedPurchases || 0) + 1;
+    if (body.sessionId) {
+      const matchSession = funnelStats.recentSessions.find((s) => s.id === body.sessionId);
+      if (matchSession) {
+        matchSession.furthestStep = 'purchase';
+        matchSession.orderCompleted = true;
+      }
+    }
+    funnelStats.lastUpdated = Date.now();
+    persistAnalytics();
+
     // Broadcast to real-time Admin listeners
     broadcastSse('NEW_ORDER', newOrder);
+    broadcastSse('ANALYTICS_UPDATED', funnelStats);
 
     return res.status(201).json({ success: true, order: newOrder });
   });
@@ -271,6 +369,107 @@ async function startServer() {
         wilayaCounts,
       },
     });
+  });
+
+  const STEP_WEIGHT: Record<string, number> = {
+    page_view: 1,
+    content_engaged: 2,
+    add_to_cart: 3,
+    initiate_checkout: 4,
+    form_started: 5,
+    validation_failed: 5,
+    purchase: 6,
+  };
+
+  // GET Funnel Analytics - Open for Admin Dashboard
+  app.get('/api/analytics', (req: Request, res: Response) => {
+    res.json({ success: true, stats: funnelStats });
+  });
+
+  // POST Track funnel event from any visitor device (mobile phone, desktop, etc.)
+  app.post('/api/analytics/track', (req: Request, res: Response) => {
+    const { sessionId, event, device, source, fieldName, selectedPackage } = req.body || {};
+    if (!sessionId || !event) {
+      return res.status(400).json({ success: false, error: 'sessionId and event are required' });
+    }
+
+    const now = Date.now();
+    funnelStats.lastUpdated = now;
+
+    let session = funnelStats.recentSessions.find((s) => s.id === sessionId);
+    if (!session) {
+      session = {
+        id: sessionId,
+        startTime: now,
+        lastActiveTime: now,
+        source: source || 'زيارة مباشرة',
+        device: device || 'هاتف محمول',
+        furthestStep: 'page_view',
+        validationErrorsCount: 0,
+      };
+      funnelStats.recentSessions.unshift(session);
+      if (funnelStats.recentSessions.length > 80) {
+        funnelStats.recentSessions.pop();
+      }
+
+      funnelStats.totalVisitors = (funnelStats.totalVisitors || 0) + 1;
+      if (session.device === 'هاتف محمول') {
+        funnelStats.devices.mobile = (funnelStats.devices.mobile || 0) + 1;
+      } else {
+        funnelStats.devices.desktop = (funnelStats.devices.desktop || 0) + 1;
+      }
+
+      const srcKey = session.source;
+      funnelStats.sources[srcKey] = (funnelStats.sources[srcKey] || 0) + 1;
+    } else {
+      session.lastActiveTime = now;
+      if (device && !session.device) session.device = device;
+      if (source && session.source === 'زيارة مباشرة') session.source = source;
+    }
+
+    if (selectedPackage) {
+      session.selectedPackage = selectedPackage;
+    }
+
+    const currWeight = STEP_WEIGHT[session.furthestStep] || 1;
+    const newWeight = STEP_WEIGHT[event] || 1;
+
+    if (newWeight > currWeight) {
+      session.furthestStep = event;
+      if (event === 'content_engaged') funnelStats.contentEngaged = (funnelStats.contentEngaged || 0) + 1;
+      if (event === 'add_to_cart') funnelStats.clickedAddToCart = (funnelStats.clickedAddToCart || 0) + 1;
+      if (event === 'initiate_checkout') funnelStats.reachedCheckoutForm = (funnelStats.reachedCheckoutForm || 0) + 1;
+      if (event === 'form_started') funnelStats.startedFillingForm = (funnelStats.startedFillingForm || 0) + 1;
+      if (event === 'purchase') {
+        funnelStats.completedPurchases = (funnelStats.completedPurchases || 0) + 1;
+        session.orderCompleted = true;
+      }
+    }
+
+    if (fieldName) {
+      session.lastActiveField = fieldName;
+      if (funnelStats.fieldDropOffs[fieldName] !== undefined) {
+        funnelStats.fieldDropOffs[fieldName] = (funnelStats.fieldDropOffs[fieldName] || 0) + 1;
+      }
+    }
+
+    if (event === 'validation_failed') {
+      session.validationErrorsCount = (session.validationErrorsCount || 0) + 1;
+      funnelStats.validationFailed = (funnelStats.validationFailed || 0) + 1;
+    }
+
+    persistAnalytics();
+    broadcastSse('ANALYTICS_UPDATED', funnelStats);
+
+    return res.json({ success: true, stats: funnelStats });
+  });
+
+  // POST Clear funnel analytics
+  app.post('/api/analytics/clear', checkAdminAuth, (req: Request, res: Response) => {
+    funnelStats = getInitialAnalytics();
+    persistAnalytics();
+    broadcastSse('ANALYTICS_UPDATED', funnelStats);
+    return res.json({ success: true, stats: funnelStats });
   });
 
   // Vite middleware for development vs static in production

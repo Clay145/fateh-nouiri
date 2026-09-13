@@ -28,26 +28,21 @@ export const FunnelAnalyticsView: React.FC = () => {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   useEffect(() => {
-    // Initial fetch
+    // Initial fetch from cache
     setStats(getFunnelStats());
 
-    // Listen for realtime updates from other tabs / user actions
+    // Listen for realtime updates from server, phone devices & other tabs
     const unsubscribe = subscribeToAnalytics((updated) => {
       setStats(updated);
     });
 
-    const interval = setInterval(() => {
-      setStats(getFunnelStats());
-    }, 4000);
-
     return () => {
       unsubscribe();
-      clearInterval(interval);
     };
   }, []);
 
-  const handleReset = () => {
-    clearAnalytics();
+  const handleReset = async () => {
+    await clearAnalytics();
     setStats(getFunnelStats());
     setShowClearConfirm(false);
   };

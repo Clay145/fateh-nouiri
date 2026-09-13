@@ -61,7 +61,7 @@ try {
   // ignore
 }
 
-function getInitialStats(): FunnelStats {
+export function getInitialStats(): FunnelStats {
   return {
     totalVisitors: 0,
     contentEngaged: 0,
@@ -87,7 +87,7 @@ function getInitialStats(): FunnelStats {
 }
 
 /**
- * Load persisted funnel stats from localStorage
+ * Load persisted funnel stats from localStorage cache
  */
 export function getFunnelStats(): FunnelStats {
   if (typeof window === 'undefined') return getInitialStats();
@@ -106,13 +106,13 @@ export function getFunnelStats(): FunnelStats {
 }
 
 /**
- * Save funnel stats and broadcast to all open tabs (Admin Dashboard)
+ * Save funnel stats to cache and broadcast
  */
-function saveFunnelStats(stats: FunnelStats): void {
+function saveFunnelStats(stats: FunnelStats, broadcast = true): void {
   stats.lastUpdated = Date.now();
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(stats));
-    if (channel) {
+    if (broadcast && channel) {
       channel.postMessage({ type: 'STATS_UPDATED', stats });
     }
   } catch {
@@ -121,13 +121,85 @@ function saveFunnelStats(stats: FunnelStats): void {
 }
 
 /**
- * Reset all analytics stats (Clean slate for new Ad Campaign)
+ * Send event to backend server so ANY visitor (phone, laptop, tablet) is saved centrally
  */
-export function clearAnalytics(): void {
+function postEventToServer(
+  event: FunnelStep,
+  extra?: { fieldName?: 'fullname' | 'phone' | 'wilaya' | 'address'; selectedPackage?: string; totalPrice?: number }
+) {
+  if (typeof window === 'undefined') return;
+  const session = getCurrentSession();
+
+  const payload = {
+    sessionId: session.id,
+    event,
+    device: session.device,
+    source: session.source,
+    fieldName: extra?.fieldName,
+    selectedPackage: extra?.selectedPackage,
+    totalPrice: extra?.totalPrice,
+  };
+
+  try {
+    const jsonStr = JSON.stringify(payload);
+    if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const success = navigator.sendBeacon('/api/analytics/track', blob);
+      if (success) return;
+    }
+  } catch {
+    // fallback to fetch
+  }
+
+  fetch('/api/analytics/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    keepalive: true,
+  }).catch(() => {
+    // offline or silent fail
+  });
+}
+
+/**
+ * Fetch latest aggregated analytics stats from the backend server
+ */
+export async function fetchServerStats(): Promise<FunnelStats | null> {
+  if (typeof window === 'undefined') return null;
+  try {
+    const res = await fetch('/api/analytics');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.stats) {
+        saveFunnelStats(data.stats, false);
+        return data.stats as FunnelStats;
+      }
+    }
+  } catch {
+    // offline or backend unreachable
+  }
+  return null;
+}
+
+/**
+ * Reset all analytics stats on both server and client (Clean slate for new Ad Campaign)
+ */
+export async function clearAnalytics(): Promise<void> {
   try {
     const fresh = getInitialStats();
-    saveFunnelStats(fresh);
-    sessionStorage.removeItem(SESSION_KEY);
+    saveFunnelStats(fresh, true);
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem('theoria_tracked_pv');
+      const token = localStorage.getItem('theoria_admin_token') || 'theoria2026';
+      await fetch('/api/analytics/clear', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      }).catch(() => {});
+    }
     if (channel) {
       channel.postMessage({ type: 'ANALYTICS_CLEARED' });
     }
@@ -162,13 +234,19 @@ export function getCurrentSession(): VisitorSession {
   }
 
   // Detect Device
-  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+  const isMobile =
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    window.innerWidth < 768;
   const device: 'هاتف محمول' | 'كمبيوتر' = isMobile ? 'هاتف محمول' : 'كمبيوتر';
 
   // Detect Ad Traffic Source
   const urlParams = new URLSearchParams(window.location.search);
   let source = 'زيارة مباشرة';
-  if (urlParams.has('fbclid') || urlParams.get('utm_source')?.includes('facebook') || urlParams.get('utm_source')?.includes('fb')) {
+  if (
+    urlParams.has('fbclid') ||
+    urlParams.get('utm_source')?.includes('facebook') ||
+    urlParams.get('utm_source')?.includes('fb')
+  ) {
     source = 'إعلان فيسبوك / انستغرام';
   } else if (urlParams.get('utm_source')?.includes('tiktok') || urlParams.has('ttclid')) {
     source = 'إعلان تيك توك';
@@ -180,8 +258,20 @@ export function getCurrentSession(): VisitorSession {
     source = 'انستغرام';
   }
 
+  // Ensure unique ID per visitor session
+  const storedVisId = localStorage.getItem('theoria_vis_id');
+  const visitorId =
+    storedVisId || `vis_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  if (!storedVisId) {
+    try {
+      localStorage.setItem('theoria_vis_id', visitorId);
+    } catch {
+      // ignore
+    }
+  }
+
   const newSession: VisitorSession = {
-    id: `vis_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    id: visitorId,
     startTime: Date.now(),
     lastActiveTime: Date.now(),
     source,
@@ -222,9 +312,13 @@ const STEP_WEIGHT: Record<FunnelStep, number> = {
 };
 
 /**
- * Update the session's furthest step in stats
+ * Update the session's furthest step in stats & sync to server
  */
-function advanceStep(newStep: FunnelStep, fieldName?: 'fullname' | 'phone' | 'wilaya' | 'address') {
+function advanceStep(
+  newStep: FunnelStep,
+  fieldName?: 'fullname' | 'phone' | 'wilaya' | 'address',
+  extra?: { selectedPackage?: string; totalPrice?: number }
+) {
   const session = getCurrentSession();
   const currentWeight = STEP_WEIGHT[session.furthestStep] || 0;
   const newWeight = STEP_WEIGHT[newStep] || 0;
@@ -237,10 +331,13 @@ function advanceStep(newStep: FunnelStep, fieldName?: 'fullname' | 'phone' | 'wi
   if (fieldName) {
     session.lastActiveField = fieldName;
   }
+  if (extra?.selectedPackage) {
+    session.selectedPackage = extra.selectedPackage;
+  }
 
   saveCurrentSession(session);
 
-  // Update aggregated stats
+  // Update aggregated local cache
   const stats = getFunnelStats();
 
   if (stepAdvanced) {
@@ -261,10 +358,17 @@ function advanceStep(newStep: FunnelStep, fieldName?: 'fullname' | 'phone' | 'wi
     stats.recentSessions[existingIdx] = session;
   } else {
     stats.recentSessions.unshift(session);
-    if (stats.recentSessions.length > 50) stats.recentSessions.pop();
+    if (stats.recentSessions.length > 60) stats.recentSessions.pop();
   }
 
-  saveFunnelStats(stats);
+  saveFunnelStats(stats, true);
+
+  // Sync to Backend Server immediately
+  postEventToServer(newStep, {
+    fieldName,
+    selectedPackage: extra?.selectedPackage || session.selectedPackage,
+    totalPrice: extra?.totalPrice,
+  });
 }
 
 // -------------------------------------------------------------
@@ -294,10 +398,13 @@ export function trackPageViewVisitor(): void {
     stats.sources[src] = (stats.sources[src] || 0) + 1;
 
     stats.recentSessions.unshift(session);
-    if (stats.recentSessions.length > 50) stats.recentSessions.pop();
+    if (stats.recentSessions.length > 60) stats.recentSessions.pop();
 
-    saveFunnelStats(stats);
+    saveFunnelStats(stats, true);
   }
+
+  // Always register page view with the server
+  postEventToServer('page_view');
 }
 
 /**
@@ -356,7 +463,9 @@ export function trackValidationFailed(reason: string): void {
 
   const stats = getFunnelStats();
   stats.validationFailed = (stats.validationFailed || 0) + 1;
-  saveFunnelStats(stats);
+  saveFunnelStats(stats, true);
+
+  postEventToServer('validation_failed');
 }
 
 /**
@@ -375,15 +484,37 @@ export function trackPurchaseComplete(orderCode: string, amount: number, package
 
   const session = getCurrentSession();
   session.orderCompleted = true;
+  session.selectedPackage = packageName;
   saveCurrentSession(session);
 
-  advanceStep('purchase');
+  advanceStep('purchase', undefined, { selectedPackage: packageName, totalPrice: amount });
 }
 
 /**
- * Realtime hook listener for Admin Dashboard
+ * Realtime hook listener for Admin Dashboard with multi-device polling & channel sync
  */
 export function subscribeToAnalytics(callback: (stats: FunnelStats) => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+
+  // 1. Deliver immediate local cache
+  callback(getFunnelStats());
+
+  // 2. Fetch latest server state immediately
+  fetchServerStats().then((serverStats) => {
+    if (serverStats) {
+      callback(serverStats);
+    }
+  });
+
+  // 3. Poll server every 3.5 seconds so mobile phone visits appear live in dashboard
+  const pollTimer = window.setInterval(async () => {
+    const freshStats = await fetchServerStats();
+    if (freshStats) {
+      callback(freshStats);
+    }
+  }, 3500);
+
+  // 4. Tab-to-tab Broadcast listener
   const handleBroadcast = (event: MessageEvent) => {
     if (event.data?.type === 'STATS_UPDATED' && event.data.stats) {
       callback(event.data.stats);
@@ -408,6 +539,7 @@ export function subscribeToAnalytics(callback: (stats: FunnelStats) => void): ()
   window.addEventListener('storage', handleStorage);
 
   return () => {
+    window.clearInterval(pollTimer);
     if (channel) channel.removeEventListener('message', handleBroadcast);
     window.removeEventListener('storage', handleStorage);
   };

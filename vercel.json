@@ -21,6 +21,14 @@
       "destination": "/api/orders"
     },
     {
+      "source": "/api/analytics/:path*",
+      "destination": "/api/analytics?path=:path*"
+    },
+    {
+      "source": "/api/analytics",
+      "destination": "/api/analytics"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }

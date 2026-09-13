@@ -40,11 +40,12 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
   // 1. GET ORDERS / STREAM
   if (req.method === 'GET') {
     if (id === 'stream') {
-      return res.status(200).json({
-        success: true,
-        streamActive: false,
-        message: 'Serverless runtime: live sync maintained via broadcast channel and polling',
-      });
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.send(`data: {"type":"CONNECTED","message":"Live sync active"}\n\n`);
+      return res.end();
     }
 
     if (id) {
