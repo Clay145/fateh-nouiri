@@ -5,6 +5,14 @@
       "destination": "/api/admin-login"
     },
     {
+      "source": "/api/admin/verify",
+      "destination": "/api/admin-verify"
+    },
+    {
+      "source": "/api/orders/stream",
+      "destination": "/api/orders?id=stream"
+    },
+    {
       "source": "/api/orders/:id",
       "destination": "/api/orders?id=:id"
     },

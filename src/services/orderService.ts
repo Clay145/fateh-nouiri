@@ -436,10 +436,8 @@ export function subscribeToRealtimeOrders(callbacks: {
           eventSource.close();
           eventSource = null;
         }
-        // If SSE fails (like on static Vercel), fall back to background polling
-        if (sseFailures >= 2) {
-          startPolling();
-        }
+        // Fall back to background polling seamlessly
+        startPolling();
       };
     } catch {
       sseFailures++;

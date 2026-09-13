@@ -37,8 +37,22 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
 
   const { id } = req.query;
 
-  // 1. GET ALL ORDERS
-  if (req.method === 'GET' && !id) {
+  // 1. GET ORDERS / STREAM
+  if (req.method === 'GET') {
+    if (id === 'stream') {
+      return res.status(200).json({
+        success: true,
+        streamActive: false,
+        message: 'Serverless runtime: live sync maintained via broadcast channel and polling',
+      });
+    }
+
+    if (id) {
+      const order = (global.__THEORIA_ORDERS__ || []).find((o) => o.id === id || o.orderCode === id);
+      if (!order) return res.status(404).json({ success: false, error: 'Order not found' });
+      return res.status(200).json({ success: true, order });
+    }
+
     return res.status(200).json({
       success: true,
       orders: global.__THEORIA_ORDERS__ || [],
