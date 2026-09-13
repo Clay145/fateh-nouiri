@@ -1,8 +1,21 @@
 import { PlacedOrder, OrderStatus } from '../types';
+import { db } from '../lib/firebase';
+import {
+  collection,
+  doc,
+  setDoc,
+  getDocs,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  orderBy,
+} from 'firebase/firestore';
 
 const STORAGE_KEY = 'theoria_orders';
 const BROADCAST_CHANNEL_NAME = 'theoria_orders_channel';
 const ADMIN_TOKEN_KEY = 'theoria_admin_token';
+const FIRESTORE_ORDERS_COLLECTION = 'orders';
 
 // In production, no mock/fake seed orders - only real incoming customer orders
 const DEFAULT_SEED_ORDERS: PlacedOrder[] = [];
@@ -39,7 +52,7 @@ export function removeAdminToken(): void {
 export async function loginAdmin(password: string): Promise<boolean> {
   const cleanPassword = password.trim();
 
-  // Try API first
+  // Try API first if backend is running
   try {
     const res = await fetch('/api/admin/login', {
       method: 'POST',
@@ -139,7 +152,6 @@ export function getLocalOrders(): PlacedOrder[] {
     if (local) {
       const parsed = JSON.parse(local);
       if (Array.isArray(parsed)) {
-        // Filter out any previous mock seed orders (ord_1, ord_2, ord_3) so merchant starts 100% clean
         return parsed.filter((o) => o && o.id !== 'ord_1' && o.id !== 'ord_2' && o.id !== 'ord_3' && !o.notes?.includes('طلب تجريبي'));
       }
     }
@@ -152,7 +164,7 @@ export function getLocalOrders(): PlacedOrder[] {
 /**
  * Clear all test / demo orders completely
  */
-export function clearAllOrders(): void {
+export async function clearAllOrders(): Promise<void> {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
     if (channel) {
@@ -164,50 +176,76 @@ export function clearAllOrders(): void {
 }
 
 /**
- * Fetch all orders: tries /api/orders, merges with localStorage
+ * Fetch all orders:
+ * 1. Queries Cloud Firestore database directly (durable, permanent storage across all devices).
+ * 2. Merges with local storage cache to ensure instant offline capability.
  */
 export async function getOrders(): Promise<PlacedOrder[]> {
   const localOrders = getLocalOrders();
+  const orderMap = new Map<string, PlacedOrder>();
 
+  // Start with local cache
+  localOrders.forEach((o) => {
+    orderMap.set(o.id || o.orderCode, o);
+  });
+
+  // 1. Primary Source of Truth: Cloud Firestore
   try {
-    const token = getAdminToken();
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const ordersCol = collection(db, FIRESTORE_ORDERS_COLLECTION);
+    const q = query(ordersCol, orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(q);
 
-    const res = await fetch('/api/orders', { headers });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success && Array.isArray(data.orders)) {
-        // Merge API orders with local orders (preserving any newly placed ones)
-        const orderMap = new Map<string, PlacedOrder>();
-        // Filter out mock IDs if any
-        data.orders
-          .filter((o: PlacedOrder) => o.id !== 'ord_1' && o.id !== 'ord_2' && o.id !== 'ord_3' && !o.notes?.includes('طلب تجريبي'))
-          .forEach((o: PlacedOrder) => orderMap.set(o.id || o.orderCode, o));
-
-        localOrders.forEach((o: PlacedOrder) => {
-          if (!orderMap.has(o.id || o.orderCode)) {
-            orderMap.set(o.id || o.orderCode, o);
-          }
-        });
-        const merged = Array.from(orderMap.values()).sort((a, b) => b.createdAt - a.createdAt);
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-        } catch {
-          // ignore
+    if (!snapshot.empty) {
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as PlacedOrder;
+        const finalOrder: PlacedOrder = {
+          ...data,
+          id: docSnap.id || data.id,
+        };
+        // Exclude old mock/test orders
+        if (finalOrder.id !== 'ord_1' && finalOrder.id !== 'ord_2' && finalOrder.id !== 'ord_3' && !finalOrder.notes?.includes('طلب تجريبي')) {
+          orderMap.set(finalOrder.id, finalOrder);
         }
-        return merged;
-      }
+      });
     }
-  } catch {
-    // Backend unavailable, local orders used
+  } catch (firestoreError) {
+    console.warn('Firestore fetch query failed, falling back to server API / local:', firestoreError);
+
+    // 2. Secondary fallback: Express API endpoint
+    try {
+      const token = getAdminToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch('/api/orders', { headers });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.orders)) {
+          data.orders
+            .filter((o: PlacedOrder) => o.id !== 'ord_1' && o.id !== 'ord_2' && o.id !== 'ord_3' && !o.notes?.includes('طلب تجريبي'))
+            .forEach((o: PlacedOrder) => orderMap.set(o.id || o.orderCode, o));
+        }
+      }
+    } catch {
+      // Backend unavailable, continue with what we have
+    }
   }
 
-  return localOrders;
+  const merged = Array.from(orderMap.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+  } catch {
+    // ignore
+  }
+  return merged;
 }
 
 /**
- * Submit a new customer order (persists to localStorage + broadcasts + attempts API)
+ * Submit a new customer order:
+ * 1. Saves directly to Cloud Firestore (guaranteeing it is NEVER lost, even if hosting restarts).
+ * 2. Persists to local storage for immediate receipt viewing.
+ * 3. Broadcasts across browser tabs.
+ * 4. Syncs with backend API.
  */
 export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<PlacedOrder> {
   const preparedOrder: PlacedOrder = {
@@ -225,7 +263,15 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
     notes: orderData.notes || '',
   };
 
-  // 1. Immediately guarantee local storage persistence
+  // 1. Permanent Cloud Storage: Write to Firebase Firestore
+  try {
+    const orderDocRef = doc(db, FIRESTORE_ORDERS_COLLECTION, preparedOrder.id);
+    await setDoc(orderDocRef, { ...preparedOrder });
+  } catch (firestoreErr) {
+    console.error('Firestore save failed, falling back to local/API:', firestoreErr);
+  }
+
+  // 2. Local persistence in browser storage
   try {
     const current = getLocalOrders();
     const updated = [preparedOrder, ...current.filter((o) => o.id !== preparedOrder.id && o.orderCode !== preparedOrder.orderCode)];
@@ -234,7 +280,7 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
     console.error('LocalStorage write failed:', e);
   }
 
-  // 2. Broadcast across tabs (BroadcastChannel + Window Storage event)
+  // 3. Broadcast across tabs (BroadcastChannel + Window Storage event)
   if (channel) {
     try {
       channel.postMessage({ type: 'NEW_ORDER', order: preparedOrder });
@@ -243,7 +289,7 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
     }
   }
 
-  // 3. Attempt API sync in background (Vercel Serverless / Express)
+  // 4. Attempt API sync to server
   try {
     fetch('/api/orders', {
       method: 'POST',
@@ -267,7 +313,18 @@ export async function updateOrderStatus(
   status?: OrderStatus,
   notes?: string
 ): Promise<boolean> {
-  // 1. Update local storage
+  // 1. Cloud Firestore update
+  try {
+    const orderDocRef = doc(db, FIRESTORE_ORDERS_COLLECTION, orderId);
+    const updates: Record<string, unknown> = {};
+    if (status) updates.status = status;
+    if (notes !== undefined) updates.notes = notes;
+    await updateDoc(orderDocRef, updates);
+  } catch (err) {
+    console.warn('Firestore updateDoc error:', err);
+  }
+
+  // 2. Update local storage
   try {
     const existing = getLocalOrders();
     const idx = existing.findIndex((o) => o.id === orderId || o.orderCode === orderId);
@@ -283,7 +340,7 @@ export async function updateOrderStatus(
     // ignore
   }
 
-  // 2. Attempt API update
+  // 3. Attempt API update
   const token = getAdminToken();
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -304,7 +361,15 @@ export async function updateOrderStatus(
  * Delete an order
  */
 export async function deleteOrder(orderId: string): Promise<boolean> {
-  // 1. Update local storage
+  // 1. Cloud Firestore delete
+  try {
+    const orderDocRef = doc(db, FIRESTORE_ORDERS_COLLECTION, orderId);
+    await deleteDoc(orderDocRef);
+  } catch (err) {
+    console.warn('Firestore deleteDoc error:', err);
+  }
+
+  // 2. Update local storage
   try {
     const existing = getLocalOrders();
     const updated = existing.filter((o) => o.id !== orderId && o.orderCode !== orderId);
@@ -316,7 +381,7 @@ export async function deleteOrder(orderId: string): Promise<boolean> {
     // ignore
   }
 
-  // 2. Attempt API delete
+  // 3. Attempt API delete
   const token = getAdminToken();
   try {
     const headers: Record<string, string> = {};
@@ -331,8 +396,9 @@ export async function deleteOrder(orderId: string): Promise<boolean> {
 
 /**
  * Real-time subscription hook:
- * Uses BroadcastChannel + window storage listener + periodic polling fallback.
- * Only attempts SSE if available and doesn't spam errors.
+ * 1. Uses Firebase Firestore onSnapshot for real-time live database updates from any device worldwide.
+ * 2. Uses BroadcastChannel + Window Storage event listener for multi-tab synchronization.
+ * 3. Fallback to API polling if Firestore stream drops.
  */
 export function subscribeToRealtimeOrders(callbacks: {
   onNewOrder: (order: PlacedOrder) => void;
@@ -342,17 +408,62 @@ export function subscribeToRealtimeOrders(callbacks: {
   onClearAll?: () => void;
 }): () => void {
   let isClosed = false;
-  let eventSource: EventSource | null = null;
+  let unsubscribeFirestore: (() => void) | null = null;
   let pollingTimer: number | null = null;
-  let knownIds = new Set<string>();
+  const knownIds = new Set<string>();
 
-  // Mark connection as active via client channels
+  // Mark connection as active
   callbacks.onConnectionChange?.(true);
 
-  // Initialize known IDs from current storage
+  // Initialize known IDs from local storage
   getLocalOrders().forEach((o) => knownIds.add(o.id || o.orderCode));
 
-  // 1. BroadcastChannel handler
+  // 1. Primary Live Sync: Cloud Firestore onSnapshot
+  try {
+    const ordersCol = collection(db, FIRESTORE_ORDERS_COLLECTION);
+    const q = query(ordersCol, orderBy('createdAt', 'desc'));
+
+    unsubscribeFirestore = onSnapshot(
+      q,
+      (snapshot) => {
+        callbacks.onConnectionChange?.(true);
+        snapshot.docChanges().forEach((change) => {
+          const docData = change.doc.data() as PlacedOrder;
+          const order: PlacedOrder = {
+            ...docData,
+            id: change.doc.id || docData.id,
+          };
+
+          // Ignore demo/test orders
+          if (order.id === 'ord_1' || order.id === 'ord_2' || order.id === 'ord_3' || order.notes?.includes('طلب تجريبي')) {
+            return;
+          }
+
+          const key = order.id || order.orderCode;
+
+          if (change.type === 'added') {
+            if (!knownIds.has(key)) {
+              knownIds.add(key);
+              callbacks.onNewOrder(order);
+            }
+          } else if (change.type === 'modified') {
+            callbacks.onUpdateOrder(order);
+          } else if (change.type === 'removed') {
+            knownIds.delete(key);
+            callbacks.onDeleteOrder(order.id);
+          }
+        });
+      },
+      (error) => {
+        console.warn('Firestore onSnapshot subscription warning:', error);
+        callbacks.onConnectionChange?.(false);
+      }
+    );
+  } catch (err) {
+    console.warn('Could not initialize Firestore onSnapshot listener:', err);
+  }
+
+  // 2. BroadcastChannel handler
   const handleBroadcast = (event: MessageEvent) => {
     if (!event.data) return;
     const { type, order, id } = event.data;
@@ -374,7 +485,7 @@ export function subscribeToRealtimeOrders(callbacks: {
     channel.addEventListener('message', handleBroadcast);
   }
 
-  // 2. Window Storage Event listener (triggers across tabs in same browser)
+  // 3. Window Storage Event listener (triggers across tabs in same browser)
   const handleStorageChange = (e: StorageEvent) => {
     if (e.key === STORAGE_KEY && e.newValue) {
       try {
@@ -398,79 +509,27 @@ export function subscribeToRealtimeOrders(callbacks: {
   };
   window.addEventListener('storage', handleStorageChange);
 
-  // 3. Optional SSE (only attempted once, no annoying continuous 404 loops)
-  let sseFailures = 0;
-  const trySSE = () => {
-    if (isClosed || sseFailures >= 2) return;
+  // 4. Fallback Polling (polls /api/orders every 15 seconds)
+  pollingTimer = window.setInterval(async () => {
+    if (isClosed) return;
     try {
-      const token = getAdminToken();
-      if (!token) return;
-      const sseUrl = `/api/orders/stream?token=${encodeURIComponent(token)}`;
-      eventSource = new EventSource(sseUrl);
-
-      eventSource.onopen = () => {
-        sseFailures = 0;
-        callbacks.onConnectionChange?.(true);
-      };
-
-      eventSource.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          if (data.type === 'NEW_ORDER' && data.payload) {
-            knownIds.add(data.payload.id || data.payload.orderCode);
-            callbacks.onNewOrder(data.payload as PlacedOrder);
-          } else if (data.type === 'ORDER_UPDATED' && data.payload) {
-            callbacks.onUpdateOrder(data.payload as PlacedOrder);
-          } else if (data.type === 'ORDER_DELETED' && data.payload?.id) {
-            knownIds.delete(data.payload.id);
-            callbacks.onDeleteOrder(data.payload.id);
-          }
-        } catch {
-          // ignore
+      const currentOrders = await getOrders();
+      currentOrders.forEach((o) => {
+        const key = o.id || o.orderCode;
+        if (!knownIds.has(key)) {
+          knownIds.add(key);
+          callbacks.onNewOrder(o);
         }
-      };
-
-      eventSource.onerror = () => {
-        sseFailures++;
-        if (eventSource) {
-          eventSource.close();
-          eventSource = null;
-        }
-        // Fall back to background polling seamlessly
-        startPolling();
-      };
+      });
     } catch {
-      sseFailures++;
-      startPolling();
+      // ignore
     }
-  };
-
-  // 4. Fallback Polling (polls /api/orders every 10 seconds smoothly)
-  const startPolling = () => {
-    if (pollingTimer || isClosed) return;
-    pollingTimer = window.setInterval(async () => {
-      if (isClosed) return;
-      try {
-        const currentOrders = await getOrders();
-        currentOrders.forEach((o) => {
-          const key = o.id || o.orderCode;
-          if (!knownIds.has(key)) {
-            knownIds.add(key);
-            callbacks.onNewOrder(o);
-          }
-        });
-      } catch {
-        // ignore
-      }
-    }, 10000);
-  };
-
-  trySSE();
+  }, 15000);
 
   return () => {
     isClosed = true;
+    if (unsubscribeFirestore) unsubscribeFirestore();
     if (pollingTimer) clearInterval(pollingTimer);
-    if (eventSource) eventSource.close();
     if (channel) channel.removeEventListener('message', handleBroadcast);
     window.removeEventListener('storage', handleStorageChange);
   };

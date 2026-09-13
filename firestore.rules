@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Orders collection:
+    // Any visitor can create an order (customer purchase)
+    // Reading, updating and deleting is allowed for admin dashboard / open store management
+    match /orders/{orderId} {
+      allow read: if true;
+      allow create: if request.resource.data.customerName is string &&
+                       request.resource.data.phone is string;
+      allow update, delete: if true;
+    }
+  }
+}

@@ -355,7 +355,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
                 <span className={`relative inline-flex rounded-full h-2 w-2 ${isConnected ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
               </span>
               <span className="text-xs text-slate-400 font-medium">
-                {isConnected ? 'متصل بالبث اللحظي (Live Stream)' : 'جارِ الاتصال بالبث الحي...'}
+                {isConnected ? 'متصل بقاعدة البيانات السحابية الحية (Firestore Cloud)' : 'جارِ الاتصال بقاعدة البيانات...'}
               </span>
             </div>
           </div>

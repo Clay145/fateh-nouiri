@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase order for Theoria Luxury products",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the order"
+        },
+        "orderCode": {
+          "type": "string",
+          "description": "Short Algerian order reference code, e.g. TH-12345"
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Full name of customer"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Algerian phone number"
+        },
+        "wilaya": {
+          "type": "string",
+          "description": "Algerian wilaya name or code"
+        },
+        "commune": {
+          "type": "string",
+          "description": "Commune / city address"
+        },
+        "packageTitle": {
+          "type": "string",
+          "description": "Selected product package title"
+        },
+        "totalPrice": {
+          "type": "number",
+          "description": "Total order price in DZD"
+        },
+        "date": {
+          "type": "string",
+          "description": "Arabic localized order date"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Timestamp in milliseconds"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["جديد", "تم التأكيد", "قيد التوصيل", "تم التسليم", "ملغي"],
+          "description": "Current order fulfillment status"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Internal staff notes or customer special instructions"
+        }
+      },
+      "required": ["id", "orderCode", "customerName", "phone", "wilaya", "packageTitle", "totalPrice", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Customer orders collection"
+    }
+  }
+}
