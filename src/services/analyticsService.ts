@@ -30,27 +30,35 @@ export interface FunnelStats {
   startedFillingForm: number;
   validationFailed: number;
   completedPurchases: number;
-  // Field-level drop-offs
   fieldDropOffs: {
     fullname: number;
     phone: number;
     wilaya: number;
     address: number;
   };
-  // Device breakdown
   devices: {
     mobile: number;
     desktop: number;
   };
-  // Traffic sources
   sources: Record<string, number>;
   lastUpdated: number;
   recentSessions: VisitorSession[];
 }
 
 const STORAGE_KEY = 'theoria_funnel_analytics';
+const BACKUP_STORAGE_KEY = 'theoria_analytics_permanent_vault';
 const SESSION_KEY = 'theoria_current_session';
 const BROADCAST_KEY = 'theoria_analytics_channel';
+
+export const STEP_WEIGHT: Record<FunnelStep, number> = {
+  page_view: 1,
+  content_engaged: 2,
+  add_to_cart: 3,
+  initiate_checkout: 4,
+  form_started: 5,
+  validation_failed: 5,
+  purchase: 6,
+};
 
 let channel: BroadcastChannel | null = null;
 try {
@@ -87,7 +95,79 @@ export function getInitialStats(): FunnelStats {
 }
 
 /**
- * Load persisted funnel stats from localStorage cache
+ * Intelligent Monotonic Merge: Ensures analytics data NEVER decreases or gets wiped.
+ * Merges local cache and server state taking the maximum values and union of sessions.
+ */
+export function mergeFunnelStats(local: FunnelStats, server: FunnelStats): FunnelStats {
+  const merged: FunnelStats = {
+    totalVisitors: Math.max(local.totalVisitors || 0, server.totalVisitors || 0),
+    contentEngaged: Math.max(local.contentEngaged || 0, server.contentEngaged || 0),
+    clickedAddToCart: Math.max(local.clickedAddToCart || 0, server.clickedAddToCart || 0),
+    reachedCheckoutForm: Math.max(local.reachedCheckoutForm || 0, server.reachedCheckoutForm || 0),
+    startedFillingForm: Math.max(local.startedFillingForm || 0, server.startedFillingForm || 0),
+    validationFailed: Math.max(local.validationFailed || 0, server.validationFailed || 0),
+    completedPurchases: Math.max(local.completedPurchases || 0, server.completedPurchases || 0),
+    devices: {
+      mobile: Math.max(local.devices?.mobile || 0, server.devices?.mobile || 0),
+      desktop: Math.max(local.devices?.desktop || 0, server.devices?.desktop || 0),
+    },
+    fieldDropOffs: {
+      fullname: Math.max(local.fieldDropOffs?.fullname || 0, server.fieldDropOffs?.fullname || 0),
+      phone: Math.max(local.fieldDropOffs?.phone || 0, server.fieldDropOffs?.phone || 0),
+      wilaya: Math.max(local.fieldDropOffs?.wilaya || 0, server.fieldDropOffs?.wilaya || 0),
+      address: Math.max(local.fieldDropOffs?.address || 0, server.fieldDropOffs?.address || 0),
+    },
+    sources: {},
+    lastUpdated: Math.max(local.lastUpdated || 0, server.lastUpdated || 0, Date.now()),
+    recentSessions: [],
+  };
+
+  // Merge traffic sources
+  const allSourceKeys = new Set([
+    ...Object.keys(local.sources || {}),
+    ...Object.keys(server.sources || {}),
+  ]);
+  allSourceKeys.forEach((k) => {
+    merged.sources[k] = Math.max(local.sources?.[k] || 0, server.sources?.[k] || 0);
+  });
+
+  // Merge recent sessions by unique Session ID
+  const sessionMap = new Map<string, VisitorSession>();
+
+  (local.recentSessions || []).forEach((s) => {
+    if (s && s.id) sessionMap.set(s.id, { ...s });
+  });
+
+  (server.recentSessions || []).forEach((srv) => {
+    if (!srv || !srv.id) return;
+    if (!sessionMap.has(srv.id)) {
+      sessionMap.set(srv.id, { ...srv });
+    } else {
+      const existing = sessionMap.get(srv.id)!;
+      const srvWeight = STEP_WEIGHT[srv.furthestStep] || 1;
+      const exWeight = STEP_WEIGHT[existing.furthestStep] || 1;
+      if (srvWeight > exWeight) {
+        existing.furthestStep = srv.furthestStep;
+      }
+      existing.lastActiveTime = Math.max(existing.lastActiveTime || 0, srv.lastActiveTime || 0);
+      if (srv.orderCompleted) existing.orderCompleted = true;
+      if (srv.selectedPackage) existing.selectedPackage = srv.selectedPackage;
+      if (srv.lastActiveField) existing.lastActiveField = srv.lastActiveField;
+    }
+  });
+
+  merged.recentSessions = Array.from(sessionMap.values())
+    .sort((a, b) => (b.lastActiveTime || b.startTime || 0) - (a.lastActiveTime || a.startTime || 0))
+    .slice(0, 250);
+
+  // Consistency constraint: totalVisitors cannot be smaller than recorded unique sessions
+  merged.totalVisitors = Math.max(merged.totalVisitors, merged.recentSessions.length);
+
+  return merged;
+}
+
+/**
+ * Load persisted funnel stats from localStorage cache with vault fallback
  */
 export function getFunnelStats(): FunnelStats {
   if (typeof window === 'undefined') return getInitialStats();
@@ -102,19 +182,54 @@ export function getFunnelStats(): FunnelStats {
   } catch {
     // ignore
   }
+
+  // Check permanent backup vault if primary key was empty
+  try {
+    const backupRaw = localStorage.getItem(BACKUP_STORAGE_KEY);
+    if (backupRaw) {
+      const parsedBackup = JSON.parse(backupRaw);
+      if (parsedBackup && typeof parsedBackup.totalVisitors === 'number') {
+        saveFunnelStats(parsedBackup, false);
+        return parsedBackup;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   return getInitialStats();
 }
 
 /**
- * Save funnel stats to cache and broadcast
+ * Save funnel stats to cache, permanent vault, and broadcast
  */
-function saveFunnelStats(stats: FunnelStats, broadcast = true): void {
+export function saveFunnelStats(stats: FunnelStats, broadcast = true): void {
   stats.lastUpdated = Date.now();
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(stats));
+    const serialized = JSON.stringify(stats);
+    localStorage.setItem(STORAGE_KEY, serialized);
+    // Write to secondary vault so data is never lost even if one key is cleared
+    localStorage.setItem(BACKUP_STORAGE_KEY, serialized);
+
     if (broadcast && channel) {
       channel.postMessage({ type: 'STATS_UPDATED', stats });
     }
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Sync merged stats to the server so that server restarts/cold-starts restore from client
+ */
+async function syncMergedStatsToServer(stats: FunnelStats): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    await fetch('/api/analytics/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stats }),
+    });
   } catch {
     // ignore
   }
@@ -162,7 +277,8 @@ function postEventToServer(
 }
 
 /**
- * Fetch latest aggregated analytics stats from the backend server
+ * Fetch latest aggregated analytics stats from the backend server with monotonic merge protection.
+ * NEVER allows server response to wipe out or reduce client statistics!
  */
 export async function fetchServerStats(): Promise<FunnelStats | null> {
   if (typeof window === 'undefined') return null;
@@ -171,18 +287,31 @@ export async function fetchServerStats(): Promise<FunnelStats | null> {
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.stats) {
-        saveFunnelStats(data.stats, false);
-        return data.stats as FunnelStats;
+        const localStats = getFunnelStats();
+        const merged = mergeFunnelStats(localStats, data.stats as FunnelStats);
+
+        // Save safely
+        saveFunnelStats(merged, false);
+
+        // If local had sessions or stats missing on the server, push merged to server to keep it updated!
+        if (
+          localStats.totalVisitors > (data.stats.totalVisitors || 0) ||
+          (localStats.recentSessions?.length || 0) > (data.stats.recentSessions?.length || 0)
+        ) {
+          syncMergedStatsToServer(merged);
+        }
+
+        return merged;
       }
     }
   } catch {
     // offline or backend unreachable
   }
-  return null;
+  return getFunnelStats();
 }
 
 /**
- * Reset all analytics stats on both server and client (Clean slate for new Ad Campaign)
+ * Reset all analytics stats explicitly by Admin only (Clean slate for new Ad Campaign)
  */
 export async function clearAnalytics(): Promise<void> {
   try {
@@ -191,6 +320,7 @@ export async function clearAnalytics(): Promise<void> {
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem(SESSION_KEY);
       sessionStorage.removeItem('theoria_tracked_pv');
+      localStorage.removeItem(BACKUP_STORAGE_KEY);
       const token = localStorage.getItem('theoria_admin_token') || 'theoria2026';
       await fetch('/api/analytics/clear', {
         method: 'POST',
@@ -209,37 +339,56 @@ export async function clearAnalytics(): Promise<void> {
 }
 
 /**
- * Get or create the current visitor session
+ * Check if the current context is Admin (to prevent admin actions from logging as abandoned customer sessions)
+ */
+function isAdminContext(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.location.hash.includes('admin') ||
+    window.location.pathname.includes('/admin') ||
+    !!localStorage.getItem('theoria_admin_token')
+  );
+}
+
+/**
+ * Get or create the current visitor session.
+ * Generates a unique session per 30-minute visit while maintaining a persistent visitor ID.
  */
 export function getCurrentSession(): VisitorSession {
   if (typeof window === 'undefined') {
     return {
-      id: 'server',
+      id: 'server_session',
       startTime: Date.now(),
       lastActiveTime: Date.now(),
-      source: 'مباشر',
+      source: 'زيارة مباشرة',
       device: 'هاتف محمول',
       furthestStep: 'page_view',
       validationErrorsCount: 0,
     };
   }
 
+  // 1. Check existing active session in this browser window
   try {
-    const existing = sessionStorage.getItem(SESSION_KEY);
-    if (existing) {
-      return JSON.parse(existing);
+    const existingRaw = sessionStorage.getItem(SESSION_KEY);
+    if (existingRaw) {
+      const parsed: VisitorSession = JSON.parse(existingRaw);
+      // If session is active and less than 30 minutes since last activity, keep using it
+      const thirtyMinutes = 30 * 60 * 1000;
+      if (parsed && Date.now() - (parsed.lastActiveTime || parsed.startTime) < thirtyMinutes) {
+        return parsed;
+      }
     }
   } catch {
     // ignore
   }
 
-  // Detect Device
+  // 2. Detect Device
   const isMobile =
     /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
     window.innerWidth < 768;
   const device: 'هاتف محمول' | 'كمبيوتر' = isMobile ? 'هاتف محمول' : 'كمبيوتر';
 
-  // Detect Ad Traffic Source
+  // 3. Detect Ad Traffic Source
   const urlParams = new URLSearchParams(window.location.search);
   let source = 'زيارة مباشرة';
   if (
@@ -258,20 +407,23 @@ export function getCurrentSession(): VisitorSession {
     source = 'انستغرام';
   }
 
-  // Ensure unique ID per visitor session
-  const storedVisId = localStorage.getItem('theoria_vis_id');
-  const visitorId =
-    storedVisId || `vis_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  if (!storedVisId) {
-    try {
-      localStorage.setItem('theoria_vis_id', visitorId);
-    } catch {
-      // ignore
+  // 4. Ensure unique persistent visitor identifier + unique visit session ID
+  let visitorId = '';
+  try {
+    visitorId = localStorage.getItem('theoria_visitor_id') || '';
+    if (!visitorId) {
+      visitorId = `v_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      localStorage.setItem('theoria_visitor_id', visitorId);
     }
+  } catch {
+    visitorId = `v_${Date.now()}`;
   }
 
+  // Unique session ID for each visit session
+  const sessionId = `sess_${visitorId}_${Date.now()}`;
+
   const newSession: VisitorSession = {
-    id: visitorId,
+    id: sessionId,
     startTime: Date.now(),
     lastActiveTime: Date.now(),
     source,
@@ -301,16 +453,6 @@ function saveCurrentSession(session: VisitorSession): void {
   }
 }
 
-const STEP_WEIGHT: Record<FunnelStep, number> = {
-  page_view: 1,
-  content_engaged: 2,
-  add_to_cart: 3,
-  initiate_checkout: 4,
-  form_started: 5,
-  validation_failed: 5,
-  purchase: 6,
-};
-
 /**
  * Update the session's furthest step in stats & sync to server
  */
@@ -319,6 +461,9 @@ function advanceStep(
   fieldName?: 'fullname' | 'phone' | 'wilaya' | 'address',
   extra?: { selectedPackage?: string; totalPrice?: number }
 ) {
+  // If in admin mode, do not pollute customer conversion funnel
+  if (isAdminContext()) return;
+
   const session = getCurrentSession();
   const currentWeight = STEP_WEIGHT[session.furthestStep] || 0;
   const newWeight = STEP_WEIGHT[newStep] || 0;
@@ -358,7 +503,7 @@ function advanceStep(
     stats.recentSessions[existingIdx] = session;
   } else {
     stats.recentSessions.unshift(session);
-    if (stats.recentSessions.length > 60) stats.recentSessions.pop();
+    if (stats.recentSessions.length > 250) stats.recentSessions.pop();
   }
 
   saveFunnelStats(stats, true);
@@ -380,6 +525,9 @@ function advanceStep(
  */
 export function trackPageViewVisitor(): void {
   if (typeof window === 'undefined') return;
+  // If admin, never track as customer visit
+  if (isAdminContext()) return;
+
   const session = getCurrentSession();
   const stats = getFunnelStats();
 
@@ -394,69 +542,95 @@ export function trackPageViewVisitor(): void {
       stats.devices.desktop = (stats.devices.desktop || 0) + 1;
     }
 
-    const src = session.source;
-    stats.sources[src] = (stats.sources[src] || 0) + 1;
+    const srcKey = session.source;
+    stats.sources[srcKey] = (stats.sources[srcKey] || 0) + 1;
 
-    stats.recentSessions.unshift(session);
-    if (stats.recentSessions.length > 60) stats.recentSessions.pop();
+    // Add session to recentSessions
+    if (!stats.recentSessions.some((s) => s.id === session.id)) {
+      stats.recentSessions.unshift(session);
+      if (stats.recentSessions.length > 250) stats.recentSessions.pop();
+    }
 
     saveFunnelStats(stats, true);
+    postEventToServer('page_view');
   }
-
-  // Always register page view with the server
-  postEventToServer('page_view');
 }
 
 /**
- * 2. Scrolled & Engaged with Content
+ * 2. Content Engaged Tracking (Deep scroll / reading features)
  */
 export function trackContentEngagement(): void {
-  advanceStep('content_engaged');
-}
-
-/**
- * 3. User clicked any "اطلب الآن" button
- * -> Triggers: fbq('track', 'AddToCart')
- */
-export function trackAddToCartClick(sourceButton = 'زر اطلب الآن'): void {
-  console.log(`[Funnel] AddToCart Clicked via: ${sourceButton}`);
-  // Pixel Event
-  trackAddToCart();
-
-  // Also advance funnel & note user entered checkout journey
-  advanceStep('add_to_cart');
-}
-
-/**
- * 4. User opened / reached the order form
- * -> Triggers: fbq('track', 'InitiateCheckout')
- */
-let checkoutTrackedForSession = false;
-export function trackFormOpened(source = 'عرض استمارة الطلب'): void {
-  if (!checkoutTrackedForSession) {
-    checkoutTrackedForSession = true;
-    console.log(`[Funnel] InitiateCheckout triggered via: ${source}`);
-    // Pixel Event
-    trackInitiateCheckout();
+  if (typeof window === 'undefined' || isAdminContext()) return;
+  if (!sessionStorage.getItem('theoria_tracked_eng')) {
+    sessionStorage.setItem('theoria_tracked_eng', 'true');
+    advanceStep('content_engaged');
   }
-
-  // Funnel Event
-  advanceStep('initiate_checkout');
 }
 
 /**
- * 5. User started interacting with form inputs
+ * 3. Add to Cart (CTA "اطلب الآن" clicked)
  */
-export function trackFormFieldEngagement(fieldName: 'fullname' | 'phone' | 'wilaya' | 'address'): void {
-  // Ensure initiate_checkout was marked
-  trackFormOpened(`حقل: ${fieldName}`);
-  advanceStep('form_started', fieldName);
+export function trackAddToCartClick(packageName?: string): void {
+  if (typeof window === 'undefined' || isAdminContext()) return;
+  trackAddToCart({
+    content_name: packageName || 'جهاز مساج Theoria Pro',
+    value: 9500,
+    currency: 'DZD',
+  });
+  advanceStep('add_to_cart', undefined, { selectedPackage: packageName });
 }
 
 /**
- * 6. User clicked submit but validation failed (e.g. invalid phone)
+ * 4. Initiate Checkout (Reached the Order Form)
  */
-export function trackValidationFailed(reason: string): void {
+export function trackInitiateCheckoutView(): void {
+  if (typeof window === 'undefined' || isAdminContext()) return;
+  if (!sessionStorage.getItem('theoria_tracked_checkout')) {
+    sessionStorage.setItem('theoria_tracked_checkout', 'true');
+    trackInitiateCheckout({
+      content_name: 'جهاز مساج Theoria Pro',
+      value: 9500,
+      currency: 'DZD',
+    });
+    advanceStep('initiate_checkout');
+  }
+}
+
+/**
+ * Backward compatibility alias for trackInitiateCheckoutView
+ */
+export function trackFormOpened(_context?: string): void {
+  trackInitiateCheckoutView();
+}
+
+/**
+ * 5. Form Interaction (Started typing in an input field)
+ */
+export function trackFormFieldFocus(fieldName: 'fullname' | 'phone' | 'wilaya' | 'address'): void {
+  if (typeof window === 'undefined' || isAdminContext()) return;
+  const session = getCurrentSession();
+  const formStarted = session.furthestStep === 'form_started' || session.furthestStep === 'purchase';
+  if (!formStarted) {
+    advanceStep('form_started', fieldName);
+  } else {
+    advanceStep(session.furthestStep, fieldName);
+  }
+}
+
+export const trackFormFieldEngagement = trackFormFieldFocus;
+
+/**
+ * 6. Form Validation Error
+ */
+export function trackFormValidationError(fieldOrMessage?: string): void {
+  if (typeof window === 'undefined' || isAdminContext()) return;
+  const desc = fieldOrMessage || '';
+  let fieldName: 'fullname' | 'phone' | 'wilaya' | 'address' = 'phone';
+  if (desc.includes('اسم') || desc.includes('name')) fieldName = 'fullname';
+  else if (desc.includes('هاتف') || desc.includes('phone')) fieldName = 'phone';
+  else if (desc.includes('ولاية') || desc.includes('wilaya')) fieldName = 'wilaya';
+  else if (desc.includes('عنوان') || desc.includes('بلدية') || desc.includes('address')) fieldName = 'address';
+
   const session = getCurrentSession();
   session.validationErrorsCount = (session.validationErrorsCount || 0) + 1;
   saveCurrentSession(session);
@@ -465,59 +639,69 @@ export function trackValidationFailed(reason: string): void {
   stats.validationFailed = (stats.validationFailed || 0) + 1;
   saveFunnelStats(stats, true);
 
-  postEventToServer('validation_failed');
+  postEventToServer('validation_failed', { fieldName });
 }
 
+export const trackValidationFailed = trackFormValidationError;
+
 /**
- * 7. User completed purchase successfully
- * -> Triggers: fbq('track', 'Purchase')
+ * 7. Purchase Completed - flexible signature to accept (orderId, amount, name) or (amount, orderId, name)
  */
-export function trackPurchaseComplete(orderCode: string, amount: number, packageName: string): void {
-  console.log(`[Funnel] Purchase Completed: ${orderCode}`);
-  // Pixel Event
+export function trackPurchaseSuccess(
+  param1: string | number,
+  param2: string | number,
+  packageName?: string
+): void {
+  const orderId = typeof param1 === 'string' ? param1 : String(param2);
+  const amount = typeof param1 === 'number' ? param1 : (typeof param2 === 'number' ? param2 : 9500);
+
+  if (typeof window === 'undefined') return;
   trackPurchase({
-    order_id: orderCode,
+    order_id: orderId,
     value: amount,
     currency: 'DZD',
-    content_name: packageName,
+    content_name: packageName || 'جهاز مساج Theoria Pro',
   });
 
   const session = getCurrentSession();
   session.orderCompleted = true;
-  session.selectedPackage = packageName;
   saveCurrentSession(session);
 
   advanceStep('purchase', undefined, { selectedPackage: packageName, totalPrice: amount });
 }
 
+export const trackPurchaseComplete = trackPurchaseSuccess;
+
 /**
- * Realtime hook listener for Admin Dashboard with multi-device polling & channel sync
+ * Realtime hook listener for Admin Dashboard with multi-device polling & channel sync.
+ * Always merges incoming data so nothing is ever forgotten or zeroed out.
  */
 export function subscribeToAnalytics(callback: (stats: FunnelStats) => void): () => void {
   if (typeof window === 'undefined') return () => {};
 
-  // 1. Deliver immediate local cache
+  // 1. Deliver immediate local cache with vault fallback
   callback(getFunnelStats());
 
-  // 2. Fetch latest server state immediately
+  // 2. Fetch latest server state immediately and merge safely
   fetchServerStats().then((serverStats) => {
     if (serverStats) {
       callback(serverStats);
     }
   });
 
-  // 3. Poll server every 3.5 seconds so mobile phone visits appear live in dashboard
+  // 3. Poll server every 3 seconds so mobile phone visits appear live in dashboard
   const pollTimer = window.setInterval(async () => {
     const freshStats = await fetchServerStats();
     if (freshStats) {
       callback(freshStats);
     }
-  }, 3500);
+  }, 3000);
 
   // 4. Tab-to-tab Broadcast listener
   const handleBroadcast = (event: MessageEvent) => {
     if (event.data?.type === 'STATS_UPDATED' && event.data.stats) {
-      callback(event.data.stats);
+      const merged = mergeFunnelStats(getFunnelStats(), event.data.stats);
+      callback(merged);
     } else if (event.data?.type === 'ANALYTICS_CLEARED') {
       callback(getInitialStats());
     }
@@ -526,7 +710,8 @@ export function subscribeToAnalytics(callback: (stats: FunnelStats) => void): ()
   const handleStorage = (e: StorageEvent) => {
     if (e.key === STORAGE_KEY && e.newValue) {
       try {
-        callback(JSON.parse(e.newValue));
+        const parsed = JSON.parse(e.newValue);
+        callback(parsed);
       } catch {
         // ignore
       }

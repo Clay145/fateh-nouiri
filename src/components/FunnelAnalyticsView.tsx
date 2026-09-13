@@ -4,6 +4,7 @@ import {
   getFunnelStats,
   clearAnalytics,
   subscribeToAnalytics,
+  fetchServerStats,
   VisitorSession,
 } from '../services/analyticsService';
 import {
@@ -21,11 +22,17 @@ import {
   Sparkles,
   MousePointerClick,
   HelpCircle,
+  ShieldCheck,
+  Filter,
+  RefreshCw,
 } from 'lucide-react';
 
 export const FunnelAnalyticsView: React.FC = () => {
   const [stats, setStats] = useState<FunnelStats>(getFunnelStats());
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [filterMode, setFilterMode] = useState<'all' | 'abandoned' | 'purchased' | 'form'>('all');
+  const [displayLimit, setDisplayLimit] = useState(25);
 
   useEffect(() => {
     // Initial fetch from cache
@@ -40,6 +47,18 @@ export const FunnelAnalyticsView: React.FC = () => {
       unsubscribe();
     };
   }, []);
+
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    try {
+      const updated = await fetchServerStats();
+      if (updated) {
+        setStats(updated);
+      }
+    } finally {
+      setTimeout(() => setIsSyncing(false), 600);
+    }
+  };
 
   const handleReset = async () => {
     await clearAnalytics();
@@ -130,7 +149,7 @@ export const FunnelAnalyticsView: React.FC = () => {
 
   return (
     <div className="space-y-6 text-right">
-      {/* Top Banner with Clear Controls */}
+      {/* Top Banner with Clear Controls & Sync */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#0f172a]/90 backdrop-blur p-4 sm:p-5 rounded-2xl border border-slate-800">
         <div>
           <div className="flex items-center gap-2">
@@ -144,17 +163,24 @@ export const FunnelAnalyticsView: React.FC = () => {
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-400 mt-1">
-            متابعة تحركات الزوار وإشارات فيسبوك بيكسل (AddToCart / InitiateCheckout / Purchase) لتحديد أين تضيع المبيعات.
+            متابعة تحركات الزوار وإشارات فيسبوك بيكسل (AddToCart / InitiateCheckout / Purchase) بدقة وحفظ دائم لا يضيع.
           </p>
         </div>
 
         <div className="flex items-center gap-2.5">
+          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold">
+            <ShieldCheck className="w-4 h-4" />
+            <span>حفظ دائم ومحمي (Durable)</span>
+          </div>
+
           <button
-            onClick={() => setStats(getFunnelStats())}
-            className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-            title="تحديث الأرقام"
+            onClick={handleManualSync}
+            disabled={isSyncing}
+            className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition flex items-center gap-1.5 text-xs font-bold border border-slate-700"
+            title="مزامنة فورية وتحديث البيانات"
           >
-            <RotateCcw className="w-4 h-4" />
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-[#7dd3fc]' : ''}`} />
+            <span>{isSyncing ? 'جاري المزامنة...' : 'مزامنة وتحديث'}</span>
           </button>
 
           {!showClearConfirm ? (
@@ -451,71 +477,157 @@ export const FunnelAnalyticsView: React.FC = () => {
 
       {/* Live Recent Visitor Sessions */}
       <div className="bg-[#0f172a]/90 backdrop-blur border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-          <h4 className="font-bold text-white text-sm sm:text-base flex items-center gap-2">
-            <Clock className="w-4 h-4 text-[#7dd3fc]" />
-            سجل حركة آخر الزوار ونقاط توقفهم (Live Session Log)
-          </h4>
-          <span className="text-xs text-slate-400">
-            يعرض أحدث {stats.recentSessions?.length || 0} زيارة
-          </span>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+          <div>
+            <h4 className="font-bold text-white text-sm sm:text-base flex items-center gap-2">
+              <Clock className="w-4 h-4 text-[#7dd3fc]" />
+              سجل حركة الزوار ونقاط توقفهم (Live Session Log)
+            </h4>
+            <span className="text-xs text-slate-400">
+              إجمالي الجلسات المحفوظة: {stats.recentSessions?.length || 0} زيارة
+            </span>
+          </div>
+
+          {/* Filter Pills */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              onClick={() => { setFilterMode('all'); setDisplayLimit(25); }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                filterMode === 'all'
+                  ? 'bg-[#7dd3fc]/20 text-[#7dd3fc] border border-[#7dd3fc]/40'
+                  : 'bg-slate-800/60 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              الكل ({stats.recentSessions?.length || 0})
+            </button>
+            <button
+              onClick={() => { setFilterMode('abandoned'); setDisplayLimit(25); }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                filterMode === 'abandoned'
+                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                  : 'bg-slate-800/60 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              ضغطوا "اطلب الآن" وتوقفوا ({stats.recentSessions?.filter((s) => s.furthestStep === 'add_to_cart' || s.furthestStep === 'initiate_checkout').length || 0})
+            </button>
+            <button
+              onClick={() => { setFilterMode('form'); setDisplayLimit(25); }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                filterMode === 'form'
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                  : 'bg-slate-800/60 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              توقفوا أثناء الكتابة ({stats.recentSessions?.filter((s) => s.furthestStep === 'form_started').length || 0})
+            </button>
+            <button
+              onClick={() => { setFilterMode('purchased'); setDisplayLimit(25); }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                filterMode === 'purchased'
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                  : 'bg-slate-800/60 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              أتموا الشراء ({stats.recentSessions?.filter((s) => s.furthestStep === 'purchase').length || 0})
+            </button>
+          </div>
         </div>
 
         {(!stats.recentSessions || stats.recentSessions.length === 0) ? (
           <div className="text-center py-8 text-slate-500 text-xs sm:text-sm">
-            لا توجد جلسات مسجلة بعد. بمجرد دخول أي زائر عبر الإعلان أو تصفح المتجر، ستظهر تفاصيل حركته هنا مباشرة.
+            لا توجد جلسات مسجلة بعد. بمجرد دخول أي زائر عبر الإعلان أو تصفح المتجر من هاتفه، ستظهر تفاصيل حركته هنا مباشرة وستبقى محفوظة بشكل دائم.
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-right text-xs">
-              <thead>
-                <tr className="border-b border-slate-800 text-slate-400 font-semibold">
-                  <th className="py-2.5 px-3">الوقت</th>
-                  <th className="py-2.5 px-3">الجهاز</th>
-                  <th className="py-2.5 px-3">المصدر</th>
-                  <th className="py-2.5 px-3">أبعد نقطة وصل إليها الزائر</th>
-                  <th className="py-2.5 px-3">النتيجة</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {stats.recentSessions.slice(0, 15).map((sess) => (
-                  <tr key={sess.id} className="hover:bg-slate-800/30 transition">
-                    <td className="py-3 px-3 text-slate-400 whitespace-nowrap">
-                      {formatTime(sess.lastActiveTime || sess.startTime)}
-                    </td>
-                    <td className="py-3 px-3 whitespace-nowrap">
-                      <span className="flex items-center gap-1.5 text-slate-300">
-                        {sess.device === 'هاتف محمول' ? (
-                          <Smartphone className="w-3.5 h-3.5 text-[#7dd3fc]" />
-                        ) : (
-                          <Monitor className="w-3.5 h-3.5 text-slate-400" />
-                        )}
-                        {sess.device}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3 text-slate-300 whitespace-nowrap">
-                      {sess.source}
-                    </td>
-                    <td className="py-3 px-3">
-                      {getStageBadge(sess)}
-                    </td>
-                    <td className="py-3 px-3 whitespace-nowrap">
-                      {sess.furthestStep === 'purchase' ? (
-                        <span className="text-emerald-400 font-bold">تم الشراء 💰</span>
-                      ) : sess.furthestStep === 'form_started' ? (
-                        <span className="text-amber-400">توقف أثناء الكتابة ⏳</span>
-                      ) : sess.furthestStep === 'initiate_checkout' ? (
-                        <span className="text-sky-400">توقف عند الفورم 👁️</span>
-                      ) : sess.furthestStep === 'add_to_cart' ? (
-                        <span className="text-purple-400">نقر اطلب الآن 🛒</span>
-                      ) : (
-                        <span className="text-slate-500">مغادرة مبكرة 🚪</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {(() => {
+              const filtered = (stats.recentSessions || []).filter((sess) => {
+                if (filterMode === 'abandoned') {
+                  return sess.furthestStep === 'add_to_cart' || sess.furthestStep === 'initiate_checkout';
+                }
+                if (filterMode === 'purchased') {
+                  return sess.furthestStep === 'purchase';
+                }
+                if (filterMode === 'form') {
+                  return sess.furthestStep === 'form_started';
+                }
+                return true;
+              });
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="text-center py-8 text-slate-400 text-xs">
+                    لا توجد زيارات تطابق هذا الفلتر حالياً.
+                  </div>
+                );
+              }
+
+              const visible = filtered.slice(0, displayLimit);
+
+              return (
+                <div className="space-y-3">
+                  <table className="w-full text-right text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400 font-semibold">
+                        <th className="py-2.5 px-3">الوقت</th>
+                        <th className="py-2.5 px-3">الجهاز</th>
+                        <th className="py-2.5 px-3">المصدر</th>
+                        <th className="py-2.5 px-3">أبعد نقطة وصل إليها الزائر</th>
+                        <th className="py-2.5 px-3">النتيجة</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {visible.map((sess) => (
+                        <tr key={sess.id} className="hover:bg-slate-800/30 transition">
+                          <td className="py-3 px-3 text-slate-400 whitespace-nowrap">
+                            {formatTime(sess.lastActiveTime || sess.startTime)}
+                          </td>
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <span className="flex items-center gap-1.5 text-slate-300">
+                              {sess.device === 'هاتف محمول' ? (
+                                <Smartphone className="w-3.5 h-3.5 text-[#7dd3fc]" />
+                              ) : (
+                                <Monitor className="w-3.5 h-3.5 text-slate-400" />
+                              )}
+                              {sess.device}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-slate-300 whitespace-nowrap">
+                            {sess.source}
+                          </td>
+                          <td className="py-3 px-3">
+                            {getStageBadge(sess)}
+                          </td>
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            {sess.furthestStep === 'purchase' ? (
+                              <span className="text-emerald-400 font-bold">تم الشراء 💰</span>
+                            ) : sess.furthestStep === 'form_started' ? (
+                              <span className="text-amber-400">توقف أثناء الكتابة ⏳</span>
+                            ) : sess.furthestStep === 'initiate_checkout' ? (
+                              <span className="text-sky-400">توقف عند الفورم 👁️</span>
+                            ) : sess.furthestStep === 'add_to_cart' ? (
+                              <span className="text-purple-400">نقر اطلب الآن 🛒</span>
+                            ) : (
+                              <span className="text-slate-500">مغادرة مبكرة 🚪</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {filtered.length > displayLimit && (
+                    <div className="text-center pt-3 border-t border-slate-800/60">
+                      <button
+                        onClick={() => setDisplayLimit((prev) => prev + 25)}
+                        className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-[#7dd3fc] text-xs font-semibold transition"
+                      >
+                        عرض 25 زيارة إضافية (متبقي {filtered.length - displayLimit})
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>

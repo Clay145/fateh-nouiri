@@ -1,4 +1,7 @@
 // Vercel Serverless Function for Funnel Analytics
+import fs from 'fs';
+import path from 'path';
+
 interface VercelRequest {
   method?: string;
   query: Record<string, string | string[]>;
@@ -54,6 +57,9 @@ declare global {
   var __THEORIA_ANALYTICS__: FunnelStats | undefined;
 }
 
+const FILE_PATH = path.join(process.cwd(), 'analytics_data.json');
+const TMP_FILE_PATH = '/tmp/analytics_data.json';
+
 function getInitialStats(): FunnelStats {
   return {
     totalVisitors: 0,
@@ -71,8 +77,32 @@ function getInitialStats(): FunnelStats {
   };
 }
 
-if (!global.__THEORIA_ANALYTICS__) {
-  global.__THEORIA_ANALYTICS__ = getInitialStats();
+function loadStatsFromDisk(): FunnelStats {
+  try {
+    for (const f of [FILE_PATH, TMP_FILE_PATH]) {
+      if (fs.existsSync(f)) {
+        const raw = fs.readFileSync(f, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.totalVisitors === 'number') {
+          return parsed;
+        }
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return global.__THEORIA_ANALYTICS__ || getInitialStats();
+}
+
+function saveStatsToDisk(stats: FunnelStats): void {
+  global.__THEORIA_ANALYTICS__ = stats;
+  for (const f of [TMP_FILE_PATH, FILE_PATH]) {
+    try {
+      fs.writeFileSync(f, JSON.stringify(stats, null, 2), 'utf-8');
+    } catch {
+      // ignore readonly filesystems
+    }
+  }
 }
 
 const STEP_WEIGHT: Record<string, number> = {
@@ -98,18 +128,75 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).end();
   }
 
-  const stats = global.__THEORIA_ANALYTICS__ || getInitialStats();
+  let stats = loadStatsFromDisk();
   const queryPath = (req.query?.path || '') as string;
+  const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
 
   // 1. Reset / Clear Analytics
-  if (req.method === 'POST' && (queryPath === 'clear' || req.body?.action === 'clear')) {
-    global.__THEORIA_ANALYTICS__ = getInitialStats();
-    return res.status(200).json({ success: true, stats: global.__THEORIA_ANALYTICS__ });
+  if (req.method === 'POST' && (queryPath === 'clear' || body.action === 'clear')) {
+    stats = getInitialStats();
+    saveStatsToDisk(stats);
+    return res.status(200).json({ success: true, stats });
   }
 
-  // 2. Track Event from any device (phone, laptop, tablet)
+  // 2. Synchronize Analytics from client cache
+  if (req.method === 'POST' && (queryPath === 'sync' || body.action === 'sync' || body.stats)) {
+    const incoming = body.stats as FunnelStats | undefined;
+    if (incoming && typeof incoming.totalVisitors === 'number') {
+      stats.totalVisitors = Math.max(stats.totalVisitors || 0, incoming.totalVisitors || 0);
+      stats.contentEngaged = Math.max(stats.contentEngaged || 0, incoming.contentEngaged || 0);
+      stats.clickedAddToCart = Math.max(stats.clickedAddToCart || 0, incoming.clickedAddToCart || 0);
+      stats.reachedCheckoutForm = Math.max(stats.reachedCheckoutForm || 0, incoming.reachedCheckoutForm || 0);
+      stats.startedFillingForm = Math.max(stats.startedFillingForm || 0, incoming.startedFillingForm || 0);
+      stats.validationFailed = Math.max(stats.validationFailed || 0, incoming.validationFailed || 0);
+      stats.completedPurchases = Math.max(stats.completedPurchases || 0, incoming.completedPurchases || 0);
+
+      if (incoming.devices) {
+        stats.devices.mobile = Math.max(stats.devices.mobile || 0, incoming.devices.mobile || 0);
+        stats.devices.desktop = Math.max(stats.devices.desktop || 0, incoming.devices.desktop || 0);
+      }
+      if (incoming.fieldDropOffs) {
+        stats.fieldDropOffs.fullname = Math.max(stats.fieldDropOffs.fullname || 0, incoming.fieldDropOffs.fullname || 0);
+        stats.fieldDropOffs.phone = Math.max(stats.fieldDropOffs.phone || 0, incoming.fieldDropOffs.phone || 0);
+        stats.fieldDropOffs.wilaya = Math.max(stats.fieldDropOffs.wilaya || 0, incoming.fieldDropOffs.wilaya || 0);
+        stats.fieldDropOffs.address = Math.max(stats.fieldDropOffs.address || 0, incoming.fieldDropOffs.address || 0);
+      }
+      if (incoming.sources) {
+        Object.entries(incoming.sources).forEach(([k, v]) => {
+          stats.sources[k] = Math.max(stats.sources[k] || 0, v || 0);
+        });
+      }
+      if (Array.isArray(incoming.recentSessions)) {
+        const sessionMap = new Map<string, VisitorSession>();
+        (stats.recentSessions || []).forEach((s) => sessionMap.set(s.id, s));
+        incoming.recentSessions.forEach((inc) => {
+          if (!sessionMap.has(inc.id)) {
+            sessionMap.set(inc.id, inc);
+          } else {
+            const existing = sessionMap.get(inc.id)!;
+            const incWeight = STEP_WEIGHT[inc.furthestStep] || 1;
+            const exWeight = STEP_WEIGHT[existing.furthestStep] || 1;
+            if (incWeight > exWeight) {
+              existing.furthestStep = inc.furthestStep;
+            }
+            existing.lastActiveTime = Math.max(existing.lastActiveTime || 0, inc.lastActiveTime || 0);
+            if (inc.orderCompleted) existing.orderCompleted = true;
+            if (inc.selectedPackage) existing.selectedPackage = inc.selectedPackage;
+          }
+        });
+        stats.recentSessions = Array.from(sessionMap.values())
+          .sort((a, b) => (b.lastActiveTime || b.startTime || 0) - (a.lastActiveTime || a.startTime || 0))
+          .slice(0, 250);
+        stats.totalVisitors = Math.max(stats.totalVisitors, stats.recentSessions.length);
+      }
+      stats.lastUpdated = Date.now();
+      saveStatsToDisk(stats);
+    }
+    return res.status(200).json({ success: true, stats });
+  }
+
+  // 3. Track Event from any device
   if (req.method === 'POST') {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
     const { sessionId, event, device, source, fieldName, selectedPackage } = body;
 
     if (!sessionId || !event) {
@@ -120,10 +207,8 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     stats.lastUpdated = now;
 
     let session = stats.recentSessions.find((s) => s.id === sessionId);
-    let isNewVisitor = false;
 
     if (!session) {
-      isNewVisitor = true;
       session = {
         id: sessionId,
         startTime: now,
@@ -134,7 +219,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
         validationErrorsCount: 0,
       };
       stats.recentSessions.unshift(session);
-      if (stats.recentSessions.length > 60) {
+      if (stats.recentSessions.length > 250) {
         stats.recentSessions.pop();
       }
 
@@ -184,11 +269,11 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
       stats.validationFailed = (stats.validationFailed || 0) + 1;
     }
 
-    global.__THEORIA_ANALYTICS__ = stats;
+    saveStatsToDisk(stats);
     return res.status(200).json({ success: true, stats });
   }
 
-  // 3. GET Analytics Stats
+  // 4. GET Analytics Stats
   return res.status(200).json({
     success: true,
     stats,

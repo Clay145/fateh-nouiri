@@ -20,6 +20,7 @@ interface OrderItem {
 
 const DATA_FILE = path.join(process.cwd(), 'orders_data.json');
 const ANALYTICS_FILE = path.join(process.cwd(), 'analytics_data.json');
+const ANALYTICS_BACKUP_FILE = path.join(process.cwd(), 'analytics_data.backup.json');
 
 // Real customer orders only (no fake demo orders)
 const INITIAL_ORDERS: OrderItem[] = [];
@@ -83,25 +84,54 @@ let funnelStats: FunnelStats = getInitialAnalytics();
 
 function loadAnalytics(): void {
   try {
+    let rawContent = '';
     if (fs.existsSync(ANALYTICS_FILE)) {
-      const content = fs.readFileSync(ANALYTICS_FILE, 'utf-8');
-      const parsed = JSON.parse(content);
+      rawContent = fs.readFileSync(ANALYTICS_FILE, 'utf-8');
+    } else if (fs.existsSync(ANALYTICS_BACKUP_FILE)) {
+      rawContent = fs.readFileSync(ANALYTICS_BACKUP_FILE, 'utf-8');
+    }
+
+    if (rawContent) {
+      const parsed = JSON.parse(rawContent);
       if (parsed && typeof parsed.totalVisitors === 'number') {
+        if (!Array.isArray(parsed.recentSessions)) {
+          parsed.recentSessions = [];
+        }
+        if (!parsed.fieldDropOffs) {
+          parsed.fieldDropOffs = { fullname: 0, phone: 0, wilaya: 0, address: 0 };
+        }
+        if (!parsed.devices) {
+          parsed.devices = { mobile: 0, desktop: 0 };
+        }
+        if (!parsed.sources) {
+          parsed.sources = {};
+        }
         funnelStats = parsed;
         return;
       }
     }
-    funnelStats = getInitialAnalytics();
-    fs.writeFileSync(ANALYTICS_FILE, JSON.stringify(funnelStats, null, 2), 'utf-8');
   } catch (err) {
-    console.error('Error reading analytics file:', err);
-    funnelStats = getInitialAnalytics();
+    console.error('Error reading analytics file, trying backup:', err);
+    try {
+      if (fs.existsSync(ANALYTICS_BACKUP_FILE)) {
+        const backupContent = fs.readFileSync(ANALYTICS_BACKUP_FILE, 'utf-8');
+        const parsed = JSON.parse(backupContent);
+        if (parsed && typeof parsed.totalVisitors === 'number') {
+          funnelStats = parsed;
+          return;
+        }
+      }
+    } catch {
+      // ignore
+    }
   }
 }
 
 function persistAnalytics(): void {
   try {
-    fs.writeFileSync(ANALYTICS_FILE, JSON.stringify(funnelStats, null, 2), 'utf-8');
+    const dataStr = JSON.stringify(funnelStats, null, 2);
+    fs.writeFileSync(ANALYTICS_FILE, dataStr, 'utf-8');
+    fs.writeFileSync(ANALYTICS_BACKUP_FILE, dataStr, 'utf-8');
   } catch (err) {
     console.error('Error saving analytics file:', err);
   }
@@ -283,6 +313,7 @@ async function startServer() {
     persistOrders();
 
     // Auto-update funnel analytics with purchase
+    loadAnalytics();
     funnelStats.completedPurchases = (funnelStats.completedPurchases || 0) + 1;
     if (body.sessionId) {
       const matchSession = funnelStats.recentSessions.find((s) => s.id === body.sessionId);
@@ -383,11 +414,13 @@ async function startServer() {
 
   // GET Funnel Analytics - Open for Admin Dashboard
   app.get('/api/analytics', (req: Request, res: Response) => {
+    loadAnalytics();
     res.json({ success: true, stats: funnelStats });
   });
 
   // POST Track funnel event from any visitor device (mobile phone, desktop, etc.)
   app.post('/api/analytics/track', (req: Request, res: Response) => {
+    loadAnalytics();
     const { sessionId, event, device, source, fieldName, selectedPackage } = req.body || {};
     if (!sessionId || !event) {
       return res.status(400).json({ success: false, error: 'sessionId and event are required' });
@@ -408,7 +441,7 @@ async function startServer() {
         validationErrorsCount: 0,
       };
       funnelStats.recentSessions.unshift(session);
-      if (funnelStats.recentSessions.length > 80) {
+      if (funnelStats.recentSessions.length > 250) {
         funnelStats.recentSessions.pop();
       }
 
@@ -461,6 +494,72 @@ async function startServer() {
     persistAnalytics();
     broadcastSse('ANALYTICS_UPDATED', funnelStats);
 
+    return res.json({ success: true, stats: funnelStats });
+  });
+
+  // POST Synchronize analytics between client local cache & server (Bi-directional durable persistence)
+  app.post('/api/analytics/sync', (req: Request, res: Response) => {
+    loadAnalytics();
+    const incoming = req.body?.stats as FunnelStats | undefined;
+    if (incoming && typeof incoming.totalVisitors === 'number') {
+      funnelStats.totalVisitors = Math.max(funnelStats.totalVisitors || 0, incoming.totalVisitors || 0);
+      funnelStats.contentEngaged = Math.max(funnelStats.contentEngaged || 0, incoming.contentEngaged || 0);
+      funnelStats.clickedAddToCart = Math.max(funnelStats.clickedAddToCart || 0, incoming.clickedAddToCart || 0);
+      funnelStats.reachedCheckoutForm = Math.max(funnelStats.reachedCheckoutForm || 0, incoming.reachedCheckoutForm || 0);
+      funnelStats.startedFillingForm = Math.max(funnelStats.startedFillingForm || 0, incoming.startedFillingForm || 0);
+      funnelStats.validationFailed = Math.max(funnelStats.validationFailed || 0, incoming.validationFailed || 0);
+      funnelStats.completedPurchases = Math.max(funnelStats.completedPurchases || 0, incoming.completedPurchases || 0);
+
+      // Devices
+      funnelStats.devices.mobile = Math.max(funnelStats.devices?.mobile || 0, incoming.devices?.mobile || 0);
+      funnelStats.devices.desktop = Math.max(funnelStats.devices?.desktop || 0, incoming.devices?.desktop || 0);
+
+      // Field dropoffs
+      if (incoming.fieldDropOffs) {
+        funnelStats.fieldDropOffs.fullname = Math.max(funnelStats.fieldDropOffs?.fullname || 0, incoming.fieldDropOffs.fullname || 0);
+        funnelStats.fieldDropOffs.phone = Math.max(funnelStats.fieldDropOffs?.phone || 0, incoming.fieldDropOffs.phone || 0);
+        funnelStats.fieldDropOffs.wilaya = Math.max(funnelStats.fieldDropOffs?.wilaya || 0, incoming.fieldDropOffs.wilaya || 0);
+        funnelStats.fieldDropOffs.address = Math.max(funnelStats.fieldDropOffs?.address || 0, incoming.fieldDropOffs.address || 0);
+      }
+
+      // Merge Sources
+      if (incoming.sources) {
+        Object.entries(incoming.sources).forEach(([k, v]) => {
+          funnelStats.sources[k] = Math.max(funnelStats.sources[k] || 0, v || 0);
+        });
+      }
+
+      // Merge Sessions by ID
+      if (Array.isArray(incoming.recentSessions)) {
+        const sessionMap = new Map<string, VisitorSession>();
+        (funnelStats.recentSessions || []).forEach((s) => sessionMap.set(s.id, s));
+        incoming.recentSessions.forEach((inc) => {
+          if (!sessionMap.has(inc.id)) {
+            sessionMap.set(inc.id, inc);
+          } else {
+            const existing = sessionMap.get(inc.id)!;
+            const incWeight = STEP_WEIGHT[inc.furthestStep] || 1;
+            const exWeight = STEP_WEIGHT[existing.furthestStep] || 1;
+            if (incWeight > exWeight) {
+              existing.furthestStep = inc.furthestStep;
+            }
+            existing.lastActiveTime = Math.max(existing.lastActiveTime || 0, inc.lastActiveTime || 0);
+            if (inc.orderCompleted) existing.orderCompleted = true;
+            if (inc.selectedPackage) existing.selectedPackage = inc.selectedPackage;
+            if (inc.lastActiveField) existing.lastActiveField = inc.lastActiveField;
+          }
+        });
+        funnelStats.recentSessions = Array.from(sessionMap.values())
+          .sort((a, b) => (b.lastActiveTime || b.startTime || 0) - (a.lastActiveTime || a.startTime || 0))
+          .slice(0, 250);
+
+        funnelStats.totalVisitors = Math.max(funnelStats.totalVisitors, funnelStats.recentSessions.length);
+      }
+
+      funnelStats.lastUpdated = Date.now();
+      persistAnalytics();
+      broadcastSse('ANALYTICS_UPDATED', funnelStats);
+    }
     return res.json({ success: true, stats: funnelStats });
   });
 

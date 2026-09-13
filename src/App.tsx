@@ -20,7 +20,13 @@ import { verifyAdminSession, removeAdminToken } from './services/orderService';
 import { trackPageViewVisitor, trackContentEngagement } from './services/analyticsService';
 
 export default function App() {
-  const [viewMode, setViewMode] = useState<'store' | 'admin'>('store');
+  const isInitialAdmin = typeof window !== 'undefined' && (
+    window.location.hash === '#admin' ||
+    window.location.hash === '#/admin' ||
+    window.location.pathname === '/admin' ||
+    window.location.pathname.startsWith('/admin')
+  );
+  const [viewMode, setViewMode] = useState<'store' | 'admin'>(isInitialAdmin ? 'admin' : 'store');
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(false);
   const [soundModalOpen, setSoundModalOpen] = useState(false);
   const [soundPlaying, setSoundPlaying] = useState(false);
