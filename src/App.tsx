@@ -18,15 +18,25 @@ import { AdminAuthGate } from './components/AdminAuthGate';
 import { PlacedOrder } from './types';
 import { verifyAdminSession, removeAdminToken } from './services/orderService';
 import { trackPageViewVisitor, trackContentEngagement } from './services/analyticsService';
+import { ThankYouPage } from './components/ThankYouPage';
 
 export default function App() {
+  const isInitialThankYou = typeof window !== 'undefined' && (
+    window.location.pathname === '/thank-you' ||
+    window.location.pathname === '/thank-you.php' ||
+    window.location.pathname.startsWith('/thank-you') ||
+    window.location.hash.startsWith('#/thank-you') ||
+    window.location.hash.startsWith('#thank-you')
+  );
   const isInitialAdmin = typeof window !== 'undefined' && (
     window.location.hash === '#admin' ||
     window.location.hash === '#/admin' ||
     window.location.pathname === '/admin' ||
     window.location.pathname.startsWith('/admin')
   );
-  const [viewMode, setViewMode] = useState<'store' | 'admin'>(isInitialAdmin ? 'admin' : 'store');
+  const [viewMode, setViewMode] = useState<'store' | 'admin' | 'thank-you'>(
+    isInitialThankYou ? 'thank-you' : isInitialAdmin ? 'admin' : 'store'
+  );
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(false);
   const [soundModalOpen, setSoundModalOpen] = useState(false);
   const [soundPlaying, setSoundPlaying] = useState(false);
@@ -63,22 +73,30 @@ export default function App() {
   }, [viewMode]);
 
   useEffect(() => {
-    const checkAdminRoute = () => {
+    const checkRoute = () => {
       const hash = window.location.hash;
       const pathname = window.location.pathname;
-      if (hash === '#admin' || pathname === '/admin' || hash === '#/admin') {
+      if (
+        pathname === '/thank-you' ||
+        pathname === '/thank-you.php' ||
+        pathname.startsWith('/thank-you') ||
+        hash.startsWith('#/thank-you') ||
+        hash.startsWith('#thank-you')
+      ) {
+        setViewMode('thank-you');
+      } else if (hash === '#admin' || pathname === '/admin' || hash === '#/admin') {
         setViewMode('admin');
       } else {
         setViewMode('store');
       }
     };
 
-    checkAdminRoute();
-    window.addEventListener('hashchange', checkAdminRoute);
-    window.addEventListener('popstate', checkAdminRoute);
+    checkRoute();
+    window.addEventListener('hashchange', checkRoute);
+    window.addEventListener('popstate', checkRoute);
     return () => {
-      window.removeEventListener('hashchange', checkAdminRoute);
-      window.removeEventListener('popstate', checkAdminRoute);
+      window.removeEventListener('hashchange', checkRoute);
+      window.removeEventListener('popstate', checkRoute);
     };
   }, []);
 
@@ -107,6 +125,11 @@ export default function App() {
   const handleOrderSuccess = (order: PlacedOrder) => {
     setSuccessfulOrder(order);
   };
+
+  // When user visits Thank You page
+  if (viewMode === 'thank-you') {
+    return <ThankYouPage />;
+  }
 
   // When user enters admin route
   if (viewMode === 'admin') {

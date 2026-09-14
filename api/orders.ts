@@ -69,10 +69,12 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
 
     // Sanitize and clean phone
     const cleanPhone = String(body.phone).replace(/\s+/g, '');
+    const orderCode = body.orderCode || `TH-${Math.floor(10000 + Math.random() * 90000)}`;
+    const eventId = body.eventId || `purchase_${orderCode}`;
 
     const newOrder = {
       id: body.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      orderCode: body.orderCode || `TH-${Math.floor(10000 + Math.random() * 90000)}`,
+      orderCode,
       customerName: String(body.customerName).trim(),
       phone: cleanPhone,
       wilaya: body.wilaya || 'غير محدد',
@@ -83,12 +85,23 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
       createdAt: body.createdAt || Date.now(),
       status: 'جديد',
       notes: body.notes || '',
+      eventId,
+      fbp: body.fbp,
+      fbc: body.fbc,
+      capiStatus: 'test_mode',
     };
 
     if (!global.__THEORIA_ORDERS__) global.__THEORIA_ORDERS__ = [];
     global.__THEORIA_ORDERS__.unshift(newOrder);
 
-    return res.status(201).json({ success: true, order: newOrder });
+    return res.status(201).json({
+      success: true,
+      order: newOrder,
+      metaDeduplication: {
+        eventId,
+        pixelId: '28477410788542282',
+      },
+    });
   }
 
   // 3. PATCH ORDER STATUS OR NOTES

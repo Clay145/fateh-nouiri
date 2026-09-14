@@ -3,6 +3,7 @@ import { STORE_PACKAGES } from '../data/packages';
 import { ALGERIA_WILAYAS } from '../data/wilayas';
 import { PackageOption, PlacedOrder } from '../types';
 import { submitOrder } from '../services/orderService';
+import { generatePurchaseEventId, getFbpCookie, getFbcCookie } from '../utils/pixel';
 import {
   trackAddToCartClick,
   trackFormOpened,
@@ -102,9 +103,14 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
 
     setIsSubmitting(true);
 
+    const generatedOrderCode = `TH-${Math.floor(10000 + Math.random() * 90000)}`;
+    const eventId = generatePurchaseEventId(generatedOrderCode);
+    const fbp = getFbpCookie();
+    const fbc = getFbcCookie();
+
     const placedData: Partial<PlacedOrder> = {
       id: `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      orderCode: `TH-${Math.floor(10000 + Math.random() * 90000)}`,
+      orderCode: generatedOrderCode,
       customerName: cleanName,
       phone: cleanPhone,
       wilaya: wilayaName,
@@ -117,22 +123,27 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
         day: 'numeric',
       }),
       status: 'جديد',
+      eventId,
+      fbp: fbp || undefined,
+      fbc: fbc || undefined,
     };
 
     submitOrder(placedData)
       .then((savedOrder) => {
-        // Track Pixel Purchase and Funnel Success
-        trackPurchaseComplete(savedOrder.orderCode, selectedPackage.price, selectedPackage.name);
-
         setIsSubmitting(false);
         onOrderSuccess(savedOrder);
+        // Navigate to secure Thank You page with order_id and token
+        const token = savedOrder.fb_token || '';
+        const thankYouUrl = `/thank-you?order_id=${encodeURIComponent(savedOrder.orderCode)}&token=${encodeURIComponent(token)}`;
+        window.location.href = thankYouUrl;
       })
       .catch(() => {
         // Fallback in case of unexpected promise error
         const fallbackOrder = placedData as PlacedOrder;
-        trackPurchaseComplete(fallbackOrder.orderCode, selectedPackage.price, selectedPackage.name);
         setIsSubmitting(false);
         onOrderSuccess(fallbackOrder);
+        const fallbackToken = fallbackOrder.fb_token || 'th_token';
+        window.location.href = `/thank-you?order_id=${encodeURIComponent(fallbackOrder.orderCode)}&token=${encodeURIComponent(fallbackToken)}`;
       });
   };
 

@@ -289,17 +289,36 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
     }
   }
 
-  // 4. Attempt API sync to server
+  // 4. Server API sync and token generation
   try {
-    fetch('/api/orders', {
+    const res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(preparedOrder),
-    }).catch(() => {
-      // Silently ignore if offline or API is not present
     });
-  } catch {
-    // ignore
+    if (res.ok) {
+      const data = await res.json();
+      if (data.token) {
+        preparedOrder.fb_token = data.token;
+      }
+      if (data.event_id) {
+        preparedOrder.fb_event_id = data.event_id;
+        preparedOrder.eventId = data.event_id;
+      }
+      preparedOrder.fb_sent = 0;
+      if (data.order && data.order.orderCode) {
+        preparedOrder.orderCode = data.order.orderCode;
+      }
+    }
+  } catch (err) {
+    console.warn('API sync notice:', err);
+  }
+
+  // Ensure fb_token is set even if completely offline
+  if (!preparedOrder.fb_token) {
+    preparedOrder.fb_token = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
+    preparedOrder.fb_event_id = `purchase_${preparedOrder.orderCode}`;
+    preparedOrder.fb_sent = 0;
   }
 
   return preparedOrder;

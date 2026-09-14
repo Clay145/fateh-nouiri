@@ -1,0 +1,24 @@
+[
+  {
+    "id": "ord_1789372035600",
+    "orderCode": "TH-73489",
+    "customerName": "أمين بلحاج",
+    "phone": "0555123456",
+    "wilaya": "الجزائر",
+    "commune": "",
+    "packageTitle": "جهاز مساج Theoria",
+    "totalPrice": 9500,
+    "date": "14 سبتمبر 2026",
+    "createdAt": 1789372035613,
+    "status": "جديد",
+    "notes": "",
+    "eventId": "purchase_TH-73489",
+    "fb_event_id": "purchase_TH-73489",
+    "fb_token": "69a269c71f5e4221530f600ec7a411d1",
+    "fb_sent": 1,
+    "fbp": "fb.1.1710384000.123456789",
+    "fbc": "fb.1.1710384000.IwAR2xyz987",
+    "capiStatus": "sent",
+    "fb_sent_at": 1789372047128
+  }
+]

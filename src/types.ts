@@ -33,6 +33,15 @@ export interface PlacedOrder {
   createdAt?: number;
   status?: OrderStatus;
   notes?: string;
+  // Meta Pixel & CAPI Deduplication metadata
+  eventId?: string;
+  fb_event_id?: string;
+  fb_token?: string;
+  fb_sent?: number;
+  fb_sent_at?: number;
+  fbp?: string;
+  fbc?: string;
+  capiStatus?: 'sent' | 'deduplicated' | 'skipped' | 'test_mode';
 }
 
 export interface Wilaya {

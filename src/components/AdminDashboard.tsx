@@ -39,9 +39,11 @@ import {
   LogOut,
   Copy,
   CheckCheck,
+  ShieldCheck,
 } from 'lucide-react';
 import { removeAdminToken } from '../services/orderService';
 import { FunnelAnalyticsView } from './FunnelAnalyticsView';
+import { MetaPixelDiagnosticView } from './MetaPixelDiagnosticView';
 
 interface AdminDashboardProps {
   onExitDashboard: () => void;
@@ -49,7 +51,7 @@ interface AdminDashboardProps {
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard, onLogout }) => {
-  const [activeTab, setActiveTab] = useState<'orders' | 'funnel'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'funnel' | 'meta_pixel'>('orders');
   const [orders, setOrders] = useState<PlacedOrder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
@@ -451,10 +453,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
               مباشر
             </span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('meta_pixel')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer ${
+              activeTab === 'meta_pixel'
+                ? 'bg-gradient-to-r from-[#1877f2] to-[#0d5bbd] text-white shadow-[0_0_25px_rgba(24,119,242,0.4)]'
+                : 'bg-slate-850/80 text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-800'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4 text-[#7dd3fc]" />
+            <span>تدقيق البيكسل وإلغاء التكرار (Meta Pixel & CAPI)</span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-sky-500/20 text-sky-300 border border-sky-500/30 font-mono">
+              Deduplication Active
+            </span>
+          </button>
         </div>
 
         {activeTab === 'funnel' ? (
           <FunnelAnalyticsView />
+        ) : activeTab === 'meta_pixel' ? (
+          <MetaPixelDiagnosticView />
         ) : (
           <>
             {/* KPI Cards Grid */}

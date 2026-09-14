@@ -645,29 +645,33 @@ export function trackFormValidationError(fieldOrMessage?: string): void {
 export const trackValidationFailed = trackFormValidationError;
 
 /**
- * 7. Purchase Completed - flexible signature to accept (orderId, amount, name) or (amount, orderId, name)
+ * 7. Purchase Completed - flexible signature to accept (orderId, amount, name, eventId)
  */
 export function trackPurchaseSuccess(
   param1: string | number,
   param2: string | number,
-  packageName?: string
+  packageName?: string,
+  eventId?: string
 ): void {
   const orderId = typeof param1 === 'string' ? param1 : String(param2);
   const amount = typeof param1 === 'number' ? param1 : (typeof param2 === 'number' ? param2 : 9500);
 
   if (typeof window === 'undefined') return;
-  trackPurchase({
+  const didFire = trackPurchase({
     order_id: orderId,
     value: amount,
     currency: 'DZD',
     content_name: packageName || 'جهاز مساج Theoria Pro',
+    event_id: eventId,
   });
 
   const session = getCurrentSession();
   session.orderCompleted = true;
   saveCurrentSession(session);
 
-  advanceStep('purchase', undefined, { selectedPackage: packageName, totalPrice: amount });
+  if (didFire) {
+    advanceStep('purchase', undefined, { selectedPackage: packageName, totalPrice: amount });
+  }
 }
 
 export const trackPurchaseComplete = trackPurchaseSuccess;
