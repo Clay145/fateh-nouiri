@@ -61,6 +61,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const canonicalEventId = order?.fb_event_id || order?.eventId || `purchase_${order_id}`;
   const orderValue = Number(order?.totalPrice) || 9500;
+  const testEventCode = (req.query.test_event_code as string) ||
+                        (req.headers['x-meta-test-event-code'] as string) ||
+                        order?.test_event_code ||
+                        process.env.META_TEST_EVENT_CODE ||
+                        process.env.TEST_EVENT_CODE ||
+                        'TEST45919';
 
   if (!order) {
     return res.status(200).json({
@@ -70,6 +76,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       token,
       event_id: canonicalEventId,
       fb_sent: 0,
+      test_event_code: testEventCode,
       value: orderValue,
       currency: 'DZD',
       customerName: 'زبون Theoria',
@@ -82,6 +89,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     order_id: order.orderCode || order_id,
     event_id: canonicalEventId,
     fb_sent: order.fb_sent ?? 0,
+    test_event_code: testEventCode,
     value: orderValue,
     currency: 'DZD',
     customerName: order.customerName || 'زبون Theoria',

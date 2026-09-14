@@ -121,7 +121,12 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
         onOrderSuccess(savedOrder);
         // Navigate to secure Thank You page with order_id and token
         const token = savedOrder.fb_token || '';
-        const thankYouUrl = `/thank-you?order_id=${encodeURIComponent(savedOrder.orderCode)}&token=${encodeURIComponent(token)}`;
+        const testCode = savedOrder.test_event_code ||
+          sessionStorage.getItem('meta_test_event_code') ||
+          new URLSearchParams(window.location.search).get('test_event_code') ||
+          '';
+        const testParam = testCode ? `&test_event_code=${encodeURIComponent(testCode)}` : '';
+        const thankYouUrl = `/thank-you?order_id=${encodeURIComponent(savedOrder.orderCode)}&token=${encodeURIComponent(token)}${testParam}`;
         window.location.href = thankYouUrl;
       })
       .catch(() => {
@@ -129,7 +134,12 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
         const fallbackOrder = placedData as PlacedOrder;
         onOrderSuccess(fallbackOrder);
         const fallbackToken = fallbackOrder.fb_token || 'th_token';
-        window.location.href = `/thank-you?order_id=${encodeURIComponent(fallbackOrder.orderCode)}&token=${encodeURIComponent(fallbackToken)}`;
+        const testCode = fallbackOrder.test_event_code ||
+          sessionStorage.getItem('meta_test_event_code') ||
+          new URLSearchParams(window.location.search).get('test_event_code') ||
+          '';
+        const testParam = testCode ? `&test_event_code=${encodeURIComponent(testCode)}` : '';
+        window.location.href = `/thank-you?order_id=${encodeURIComponent(fallbackOrder.orderCode)}&token=${encodeURIComponent(fallbackToken)}${testParam}`;
       });
   };
 

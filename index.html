@@ -35,24 +35,20 @@
       fbq('init', '28477410788542282');
       fbq('track', 'PageView');
 
-      // 2. Strict Interceptor Guard: Permanently block any 'Purchase' event on #order_form / landing page
+      // 2. Strict Interceptor Guard: Block Purchase event if NOT on the Thank You page
       (function() {
         var nativeFbq = window.fbq;
         window.fbq = function() {
           var action = arguments[0];
           var eventName = arguments[1];
           if (action === 'track' && eventName === 'Purchase') {
-            var fullUrl = window.location.href;
             var isThankYou = window.location.pathname.indexOf('/thank-you') !== -1 ||
                              window.location.search.indexOf('order_id=') !== -1 ||
                              window.location.hash.indexOf('thank-you') !== -1;
-            var isOrderForm = fullUrl.indexOf('#order-form') !== -1 ||
-                              fullUrl.indexOf('#order_form') !== -1 ||
-                              window.location.hash.indexOf('order') !== -1;
 
-            if (isOrderForm || !isThankYou) {
+            if (!isThankYou) {
               console.warn(
-                '[Meta Pixel Guard] BLOCKED Purchase event on #order_form / landing page! Purchase is strictly permitted only ONCE after genuine order creation on the Thank You page.'
+                '[Meta Pixel Guard] BLOCKED Purchase event on landing page / order form! Purchase is strictly permitted only on the Thank You page after order placement.'
               );
               return;
             }

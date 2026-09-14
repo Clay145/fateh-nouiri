@@ -22,6 +22,7 @@ interface OrderItem {
   fb_token?: string;
   fb_sent?: number;
   fb_sent_at?: number;
+  test_event_code?: string;
   fbp?: string;
   fbc?: string;
   capiStatus?: 'sent' | 'deduplicated' | 'skipped' | 'test_mode';
@@ -721,11 +722,14 @@ async function startServer() {
       });
     }
 
+    const testEventCode = order.test_event_code || (req.query.test_event_code as string) || process.env.META_TEST_EVENT_CODE || 'TEST45919';
+
     return res.json({
       valid: true,
       order_id: order.orderCode,
       event_id: order.fb_event_id || `purchase_${order.orderCode}`,
       fb_sent: order.fb_sent ?? 0,
+      test_event_code: testEventCode,
       value: order.totalPrice,
       currency: 'DZD',
       customerName: order.customerName,

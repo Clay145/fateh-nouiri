@@ -10,13 +10,14 @@ import {
   Layers,
   Sparkles,
 } from 'lucide-react';
-import { getMetaConversionAmount } from '../utils/pixel';
+import { getMetaConversionAmount, trackPurchase } from '../utils/pixel';
 
 interface VerificationResult {
   valid: boolean;
   order_id?: string;
   event_id?: string;
   fb_sent?: number;
+  test_event_code?: string;
   value?: number;
   currency?: string;
   customerName?: string;
@@ -134,81 +135,83 @@ export const ThankYouPage: React.FC = () => {
           const ORDER_ID = data.order_id || order_id;
           const EVENT_ID = data.event_id || `purchase_${ORDER_ID}`;
           const ORDER_VALUE = data.value || 9500;
+          const effectiveTestEventCode =
+            data.test_event_code ||
+            params.get('test_event_code') ||
+            params.get('testEventCode') ||
+            sessionStorage.getItem('meta_test_event_code') ||
+            'TEST45919';
 
-          // فحص fb_sent من قاعدة البيانات أو التخزين المحلي
-          if (data.fb_sent === 1) {
-            console.warn('[Deduplication Guard] Order already marked as fb_sent = 1. 0 duplicate events fired.');
+          // فحص الحماية من الإطلاق المزدوج في المتصفح (Browser Reload Guard)
+          const sessionFired = sessionStorage.getItem('fired_' + ORDER_ID);
+          const localFired = localStorage.getItem('theoria_pixel_fired_' + ORDER_ID);
+
+          if (sessionFired || localFired) {
+            console.warn('[Deduplication Guard] Browser Purchase already fired for order ' + ORDER_ID + '. Duplicate suppressed on reload.');
             setSessionSuppressed(true);
             setLoading(false);
             return;
           }
 
-          // فحص sessionStorage للحماية من الريفريش (Refresh Guard)
-          if (sessionStorage.getItem('fired_' + ORDER_ID)) {
-            console.warn('[Deduplication Guard] Purchase already fired in this session (sessionStorage). 0 events fired.');
-            setSessionSuppressed(true);
-            setLoading(false);
-            return;
-          }
-
-          // إطلاق حدث Purchase بالمعرف الموحد eventID
-          if (typeof (window as any).fbq === 'function') {
-            const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(ORDER_VALUE);
-            console.log('[Meta Pixel] Firing Purchase event with eventID:', EVENT_ID, `(${metaValue} ${metaCurrency})`);
-            (window as any).fbq(
-              'track',
-              'Purchase',
-              {
-                value: metaValue,
-                currency: metaCurrency,
-                order_id: ORDER_ID,
-                content_name: data.packageTitle || 'جهاز مساج واسترخاء العينين Theoria',
-                content_type: 'product',
-                original_value: ORDER_VALUE,
-                original_currency: 'DZD',
-              },
-              { eventID: EVENT_ID }
-            );
-
-            // حفظ في sessionStorage لمنع الإطلاق عند الريفريش
-            sessionStorage.setItem('fired_' + ORDER_ID, '1');
-            setFiredSuccessfully(true);
-
-            // تحديث محلي لـ fb_sent = 1
-            try {
-              const specific = localStorage.getItem(`theoria_order_${ORDER_ID}`);
-              if (specific) {
-                const ordObj = JSON.parse(specific);
-                ordObj.fb_sent = 1;
-                ordObj.fb_sent_at = Date.now();
-                localStorage.setItem(`theoria_order_${ORDER_ID}`, JSON.stringify(ordObj));
-              }
-              const rawList = localStorage.getItem('theoria_orders');
-              if (rawList) {
-                const list = JSON.parse(rawList);
-                const item = list.find((o: any) => o.orderCode === ORDER_ID || o.id === ORDER_ID);
-                if (item) {
-                  item.fb_sent = 1;
-                  localStorage.setItem('theoria_orders', JSON.stringify(list));
-                }
-              }
-            } catch (e) {
-              // ignore
+          // إطلاق حدث الشراء في المتصفح بنفس المعرف الموحد EVENT_ID
+          console.log(
+            '%c[Meta Pixel] Firing Browser Purchase event',
+            'color: #1877f2; font-weight: bold;',
+            {
+              order_id: ORDER_ID,
+              eventID: EVENT_ID,
+              value: ORDER_VALUE,
+              test_event_code: effectiveTestEventCode,
             }
+          );
 
-            // تحديث السيرفر إن أمكن لتسجيل fb_sent = 1 في قاعدة البيانات
-            fetch(`/api/mark-fb-sent?order_id=${encodeURIComponent(ORDER_ID)}&token=${encodeURIComponent(token)}`)
-              .catch(() => {
-                return fetch(`/api/mark-fb-sent.php?order_id=${encodeURIComponent(ORDER_ID)}&token=${encodeURIComponent(token)}`);
-              })
-              .then((r) => r.json().catch(() => null))
-              .then((resData) => {
-                if (resData) console.log('[Backend] fb_sent set to 1:', resData);
-              })
-              .catch((err) => {
-                console.warn('[Backend] Notice updating fb_sent:', err);
-              });
+          const fired = trackPurchase({
+            order_id: ORDER_ID,
+            event_id: EVENT_ID,
+            value: ORDER_VALUE,
+            currency: 'DZD',
+            content_name: data.packageTitle || 'جهاز مساج واسترخاء العينين Theoria',
+            test_event_code: effectiveTestEventCode,
+          });
+
+          // حفظ في sessionStorage لمنع الإطلاق عند أي Refresh
+          sessionStorage.setItem('fired_' + ORDER_ID, '1');
+          setFiredSuccessfully(true);
+
+          // تحديث محلي لـ fb_sent = 1
+          try {
+            const specific = localStorage.getItem(`theoria_order_${ORDER_ID}`);
+            if (specific) {
+              const ordObj = JSON.parse(specific);
+              ordObj.fb_sent = 1;
+              ordObj.fb_sent_at = Date.now();
+              localStorage.setItem(`theoria_order_${ORDER_ID}`, JSON.stringify(ordObj));
+            }
+            const rawList = localStorage.getItem('theoria_orders');
+            if (rawList) {
+              const list = JSON.parse(rawList);
+              const item = list.find((o: any) => o.orderCode === ORDER_ID || o.id === ORDER_ID);
+              if (item) {
+                item.fb_sent = 1;
+                localStorage.setItem('theoria_orders', JSON.stringify(list));
+              }
+            }
+          } catch (e) {
+            // ignore
           }
+
+          // تحديث السيرفر إن أمكن لتسجيل fb_sent = 1 في قاعدة البيانات
+          fetch(`/api/mark-fb-sent?order_id=${encodeURIComponent(ORDER_ID)}&token=${encodeURIComponent(token)}`)
+            .catch(() => {
+              return fetch(`/api/mark-fb-sent.php?order_id=${encodeURIComponent(ORDER_ID)}&token=${encodeURIComponent(token)}`);
+            })
+            .then((r) => r.json().catch(() => null))
+            .then((resData) => {
+              if (resData) console.log('[Backend] fb_sent set to 1:', resData);
+            })
+            .catch((err) => {
+              console.warn('[Backend] Notice updating fb_sent:', err);
+            });
         }
       } catch (err: any) {
         setVerification({

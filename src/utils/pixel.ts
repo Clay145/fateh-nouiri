@@ -143,22 +143,19 @@ export function getPixelEventLogs(): Array<{
 export function trackPixelEvent(
   eventName: string,
   parameters?: Record<string, unknown>,
-  options?: { eventID?: string }
+  options?: { eventID?: string; test_event_code?: string }
 ): void {
   if (typeof window === 'undefined') return;
 
-  // Strict Protection: Purchase is strictly forbidden on #order_form or the main landing page
+  // Strict Protection: Purchase is strictly forbidden outside the Thank You page
   if (eventName === 'Purchase') {
-    const fullUrl = window.location.href;
-    const isOrderForm = fullUrl.includes('#order-form') ||
-                        fullUrl.includes('#order_form') ||
-                        window.location.hash.includes('order');
     const isThankYouPage = window.location.pathname.includes('thank-you') ||
-                           window.location.search.includes('order_id');
+                           window.location.search.includes('order_id') ||
+                           window.location.hash.includes('thank-you');
 
-    if (isOrderForm || !isThankYouPage) {
+    if (!isThankYouPage) {
       console.warn(
-        '[Meta Pixel Protection Shield] Blocked Purchase on #order_form! Purchase is fired strictly once on the Thank You page after a real order is created.'
+        '[Meta Pixel Protection Shield] Blocked Purchase outside Thank You page! Purchase is fired strictly once on the Thank You page after a real order is created.'
       );
       return;
     }
@@ -291,6 +288,7 @@ export function trackPurchase(params: {
   content_name?: string;
   order_id: string;
   event_id?: string;
+  test_event_code?: string;
 }): boolean {
   const orderCode = params.order_id;
   if (!orderCode) {
@@ -298,16 +296,18 @@ export function trackPurchase(params: {
     return false;
   }
 
-  // Strict check: Block if attempting to fire from order form
+  // Strict check: Block if attempting to fire outside Thank You page
   if (typeof window !== 'undefined') {
-    const fullUrl = window.location.href;
-    if (fullUrl.includes('#order-form') || fullUrl.includes('#order_form') || window.location.hash.includes('order')) {
-      console.warn('[Meta Pixel Shield] Purchase event strictly blocked on #order_form! Purchase fires ONLY on thank you page after order submission.');
+    const isThankYou = window.location.pathname.includes('/thank-you') ||
+                       window.location.search.includes('order_id=') ||
+                       window.location.hash.includes('thank-you');
+    if (!isThankYou) {
+      console.warn('[Meta Pixel Shield] Purchase event strictly blocked! Purchase fires ONLY on thank you page after order submission.');
       return false;
     }
   }
 
-  // 1. DEDUPLICATION CHECK: Check if this order_id has already been fired
+  // 1. DEDUPLICATION CHECK: Check if this order_id has already been fired in this browser
   if (hasPurchaseFired(orderCode)) {
     console.warn(
       `%c[Meta Pixel Deduplication Guard] %cPurchase for order "${orderCode}" already fired! %cSuppressed to prevent duplicate counting on page refresh or direct URL access.`,
@@ -330,6 +330,13 @@ export function trackPurchase(params: {
   const rawPrice = Number(params.value) || 9500;
   const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(rawPrice);
 
+  const testEventCode = params.test_event_code ||
+    (typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('test_event_code') ||
+        sessionStorage.getItem('meta_test_event_code') ||
+        undefined
+      : undefined);
+
   const payload: Record<string, unknown> = {
     value: metaValue,
     currency: metaCurrency,
@@ -342,14 +349,21 @@ export function trackPurchase(params: {
     original_currency: 'DZD',
   };
 
+  if (testEventCode) {
+    payload.test_event_code = testEventCode;
+  }
+
   // Attach client context matching parameters
   const fbp = getFbpCookie();
   const fbc = getFbcCookie();
   if (fbp) payload._fbp = fbp;
   if (fbc) payload._fbc = fbc;
 
-  // 3. Fire to browser Pixel with identical eventID
-  trackPixelEvent('Purchase', payload, { eventID: canonicalEventId });
+  // 3. Fire to browser Pixel with identical eventID and test_event_code
+  trackPixelEvent('Purchase', payload, {
+    eventID: canonicalEventId,
+    test_event_code: testEventCode,
+  });
 
   // 4. Mark this order as fired permanently in cache
   markPurchaseFired(orderCode);
