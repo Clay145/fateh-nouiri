@@ -248,6 +248,21 @@ export async function getOrders(): Promise<PlacedOrder[]> {
  * 4. Syncs with backend API.
  */
 export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<PlacedOrder> {
+  const cleanPhone = String(orderData.phone || '').replace(/\s+/g, '');
+  
+  // Anti-Duplicate Shield: If an order with the same phone was submitted in the last 60 seconds, reuse it
+  if (cleanPhone) {
+    const existingOrders = getLocalOrders();
+    const now = Date.now();
+    const recentOrder = existingOrders.find(
+      (o) => o.phone === cleanPhone && (now - (o.createdAt || 0) < 60000)
+    );
+    if (recentOrder) {
+      console.warn(`[orderService] Duplicate submission prevented for phone ${cleanPhone}. Reusing existing order ${recentOrder.orderCode}.`);
+      return recentOrder;
+    }
+  }
+
   const orderCode = orderData.orderCode || `TH-${Math.floor(10000 + Math.random() * 90000)}`;
   const initialToken = orderData.fb_token || (Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2));
   const eventId = `purchase_${orderCode}`;

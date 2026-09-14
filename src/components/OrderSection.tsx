@@ -35,10 +35,17 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
   const [address, setAddress] = useState('');
   const [phoneError, setPhoneError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const sectionRef = useRef<HTMLElement | null>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Prevent any duplicate submission immediately and synchronously
+    if (isSubmittingRef.current || isSubmitting) {
+      console.warn('[OrderForm] Form submission already in progress, ignoring duplicate click.');
+      return;
+    }
 
     // Clean input
     const cleanName = fullName.trim();
@@ -79,6 +86,8 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
     const selectedWilayaObj = ALGERIA_WILAYAS.find((w) => w.code === wilayaCode);
     const wilayaName = selectedWilayaObj ? selectedWilayaObj.nameAr : wilayaCode;
 
+    // Lock submission synchronously
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
 
     const generatedOrderCode = `TH-${Math.floor(10000 + Math.random() * 90000)}`;
@@ -108,7 +117,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
 
     submitOrder(placedData)
       .then((savedOrder) => {
-        setIsSubmitting(false);
+        // Keep isSubmitting true during navigation to avoid any post-click double submission
         onOrderSuccess(savedOrder);
         // Navigate to secure Thank You page with order_id and token
         const token = savedOrder.fb_token || '';
@@ -118,7 +127,6 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
       .catch(() => {
         // Fallback in case of unexpected promise error
         const fallbackOrder = placedData as PlacedOrder;
-        setIsSubmitting(false);
         onOrderSuccess(fallbackOrder);
         const fallbackToken = fallbackOrder.fb_token || 'th_token';
         window.location.href = `/thank-you?order_id=${encodeURIComponent(fallbackOrder.orderCode)}&token=${encodeURIComponent(fallbackToken)}`;

@@ -559,6 +559,29 @@ async function startServer() {
       return res.status(400).json({ success: false, error: 'Customer name and phone are required' });
     }
 
+    const cleanPhone = String(body.phone).replace(/\s+/g, '');
+    const now = Date.now();
+
+    // Anti-Duplicate Shield: Check if this phone or orderCode was placed within the last 60 seconds
+    const existingOrder = orders.find(
+      (o) => (o.phone === cleanPhone || (body.orderCode && o.orderCode === body.orderCode)) &&
+             (now - (o.createdAt || 0) < 60000)
+    );
+
+    if (existingOrder) {
+      console.warn(`[Order Deduplication] Duplicate order detected for phone ${cleanPhone} (existing: ${existingOrder.orderCode}). Returning existing order without duplicate insertion or CAPI fire.`);
+      return res.status(200).json({
+        success: true,
+        isDuplicate: true,
+        order: existingOrder,
+        order_id: existingOrder.orderCode,
+        token: existingOrder.fb_token,
+        event_id: existingOrder.eventId || `purchase_${existingOrder.orderCode}`,
+        fb_sent: existingOrder.fb_sent || 0,
+        redirect_url: `/thank-you?order_id=${encodeURIComponent(existingOrder.orderCode)}&token=${encodeURIComponent(existingOrder.fb_token)}`,
+      });
+    }
+
     const orderCode = body.orderCode || `TH-${Math.floor(10000 + Math.random() * 90000)}`;
     const fb_event_id = `purchase_${orderCode}`;
     const fb_token = crypto.randomBytes(16).toString('hex');

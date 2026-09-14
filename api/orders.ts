@@ -77,6 +77,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Sanitize and clean phone
     const cleanPhone = String(body.phone).replace(/\s+/g, '');
+
+    if (!global.__THEORIA_ORDERS__) global.__THEORIA_ORDERS__ = [];
+
+    // Anti-Duplicate Shield: Check if this order or phone was submitted in the last 60 seconds
+    const now = Date.now();
+    const existingOrder = global.__THEORIA_ORDERS__.find(
+      (o) => (o.phone === cleanPhone || (body.orderCode && o.orderCode === body.orderCode)) &&
+             (now - (o.createdAt || 0) < 60000)
+    );
+
+    if (existingOrder) {
+      console.warn(`[Order Deduplication] Duplicate order detected for phone ${cleanPhone} (existing: ${existingOrder.orderCode}). Returning existing order without duplicate insertion or CAPI fire.`);
+      return res.status(200).json({
+        success: true,
+        isDuplicate: true,
+        order: existingOrder,
+        order_id: existingOrder.orderCode,
+        token: existingOrder.fb_token,
+        event_id: existingOrder.eventId || `purchase_${existingOrder.orderCode}`,
+        fb_sent: existingOrder.fb_sent || 0,
+        redirect_url: `/thank-you?order_id=${encodeURIComponent(existingOrder.orderCode)}&token=${encodeURIComponent(existingOrder.fb_token)}`,
+      });
+    }
+
     const orderCode = body.orderCode || `TH-${Math.floor(10000 + Math.random() * 90000)}`;
     const eventId = body.eventId || `purchase_${orderCode}`;
     const fb_token = body.fb_token || (Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2));
