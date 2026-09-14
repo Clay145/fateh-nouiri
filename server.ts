@@ -649,7 +649,8 @@ async function startServer() {
                           (body.test_event_code as string) || 
                           (req.headers['x-meta-test-event-code'] as string) || 
                           process.env.META_TEST_EVENT_CODE || 
-                          process.env.TEST_EVENT_CODE;
+                          process.env.TEST_EVENT_CODE ||
+                          'TEST45919';
 
     try {
       const capiResult = await processMetaCapiPurchase(newOrder, {

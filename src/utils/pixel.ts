@@ -339,8 +339,8 @@ export function trackPurchase(params: {
     (typeof window !== 'undefined'
       ? new URLSearchParams(window.location.search).get('test_event_code') ||
         sessionStorage.getItem('meta_test_event_code') ||
-        undefined
-      : undefined);
+        'TEST45919'
+      : 'TEST45919');
 
   const payload: Record<string, unknown> = {
     value: metaValue,

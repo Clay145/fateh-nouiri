@@ -174,28 +174,6 @@ export const ThankYouPage: React.FC = () => {
             test_event_code: effectiveTestEventCode,
           });
 
-          // إضافة استدعاء مباشر لـ window.fbq كضمان إضافي إذا كان fbq متاحاً
-          if (typeof (window as any).fbq === 'function') {
-            const { value: metaVal, currency: metaCurr } = getMetaConversionAmount(ORDER_VALUE);
-            try {
-              (window as any).fbq(
-                'track',
-                'Purchase',
-                {
-                  value: metaVal,
-                  currency: metaCurr,
-                  order_id: ORDER_ID,
-                  content_name: data.packageTitle || 'جهاز مساج واسترخاء العينين Theoria',
-                  content_type: 'product',
-                  test_event_code: effectiveTestEventCode,
-                },
-                { eventID: EVENT_ID, test_event_code: effectiveTestEventCode }
-              );
-            } catch (fbqErr) {
-              console.warn('[Direct fbq call error]', fbqErr);
-            }
-          }
-
           // حفظ في sessionStorage لمنع الإطلاق عند أي Refresh
           sessionStorage.setItem('fired_' + ORDER_ID, '1');
           setFiredSuccessfully(true);

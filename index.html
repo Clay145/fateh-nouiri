@@ -30,7 +30,7 @@
       }, true);
     </script>
 
-    <!-- Meta Pixel Code with Strict Protection against premature Purchase on #order_form -->
+    <!-- Meta Pixel Code -->
     <script>
       !function(f,b,e,v,n,t,s)
       {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
@@ -41,47 +41,10 @@
       s.parentNode.insertBefore(t,s)}(window, document,'script',
       'https://connect.facebook.net/en_US/fbevents.js');
       
-      // 1. Disable autoConfig so Meta Pixel does NOT automatically guess/trigger Purchase on buttons/forms
-      try {
-        if (typeof fbq === 'function') {
-          fbq('set', 'autoConfig', false, '28477410788542282');
-          fbq('init', '28477410788542282');
-          fbq('track', 'PageView');
-        }
-      } catch (e) {
-        console.warn('[Meta Pixel Init Notice]', e);
-      }
-
-      // 2. Strict Interceptor Guard: Block Purchase event if NOT on the Thank You page
-      (function() {
-        var nativeFbq = window.fbq;
-        if (typeof nativeFbq !== 'function') return;
-        window.fbq = function() {
-          try {
-            var action = arguments[0];
-            var eventName = arguments[1];
-            if (action === 'track' && eventName === 'Purchase') {
-              var isThankYou = window.location.pathname.indexOf('thank-you') !== -1 ||
-                               window.location.search.indexOf('order_id') !== -1 ||
-                               window.location.hash.indexOf('thank-you') !== -1;
-
-              if (!isThankYou) {
-                console.warn(
-                  '[Meta Pixel Guard] BLOCKED Purchase event on landing page / order form! Purchase is strictly permitted only on the Thank You page after order placement.'
-                );
-                return;
-              }
-            }
-          } catch (guardErr) {
-            // Proceed safely
-          }
-          try {
-            return nativeFbq.apply(window, arguments);
-          } catch (callErr) {
-            console.warn('[fbq call notice]', callErr);
-          }
-        };
-      })();
+      // Disable autoConfig to prevent accidental button/form event guessing
+      fbq('set', 'autoConfig', false, '28477410788542282');
+      fbq('init', '28477410788542282');
+      fbq('track', 'PageView');
     </script>
     <!-- End Meta Pixel Code -->
   </head>
