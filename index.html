@@ -33,17 +33,32 @@
       // 1. Disable autoConfig so Meta Pixel does NOT automatically guess/trigger Purchase on buttons/forms
       fbq('set', 'autoConfig', false, '28477410788542282');
       fbq('init', '28477410788542282');
+
+      // 2. Extract test_event_code from URL or sessionStorage and register it if present
+      try {
+        var urlParams = new URLSearchParams(window.location.search);
+        var testCode = urlParams.get('test_event_code') || urlParams.get('testEventCode');
+        if (testCode) {
+          sessionStorage.setItem('meta_test_event_code', testCode);
+        } else {
+          testCode = sessionStorage.getItem('meta_test_event_code');
+        }
+        if (testCode) {
+          fbq('dataProcessingOptions', []);
+        }
+      } catch (e) {}
+
       fbq('track', 'PageView');
 
-      // 2. Strict Interceptor Guard: Block Purchase event if NOT on the Thank You page
+      // 3. Strict Interceptor Guard: Block Purchase event if NOT on the Thank You page
       (function() {
         var nativeFbq = window.fbq;
         window.fbq = function() {
           var action = arguments[0];
           var eventName = arguments[1];
           if (action === 'track' && eventName === 'Purchase') {
-            var isThankYou = window.location.pathname.indexOf('/thank-you') !== -1 ||
-                             window.location.search.indexOf('order_id=') !== -1 ||
+            var isThankYou = window.location.pathname.indexOf('thank-you') !== -1 ||
+                             window.location.search.indexOf('order_id') !== -1 ||
                              window.location.hash.indexOf('thank-you') !== -1;
 
             if (!isThankYou) {
@@ -53,7 +68,7 @@
               return;
             }
           }
-          return nativeFbq.apply(this, arguments);
+          return nativeFbq.apply(window, arguments);
         };
       })();
     </script>

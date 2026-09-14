@@ -162,12 +162,17 @@ export function trackPixelEvent(
   }
 
   const eventId = options?.eventID;
+  const testEventCode = options?.test_event_code || (parameters?.test_event_code as string | undefined);
 
   if (typeof window.fbq === 'function') {
     try {
-      if (options && options.eventID) {
-        // Official Meta format: fbq('track', eventName, parameters, { eventID: '...' });
-        window.fbq('track', eventName, parameters, options);
+      const mergedOptions: Record<string, unknown> = {};
+      if (eventId) mergedOptions.eventID = eventId;
+      if (testEventCode) mergedOptions.test_event_code = testEventCode;
+
+      if (Object.keys(mergedOptions).length > 0) {
+        // Official Meta format: fbq('track', eventName, parameters, { eventID: '...', test_event_code: '...' });
+        window.fbq('track', eventName, parameters, mergedOptions as { eventID?: string });
       } else if (parameters) {
         window.fbq('track', eventName, parameters);
       } else {
