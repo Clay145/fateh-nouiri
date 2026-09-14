@@ -267,6 +267,8 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
     // browser sandbox
   }
 
+  const effectiveTestCode = testEventCode || 'TEST45919';
+
   const preparedOrder: PlacedOrder = {
     id: orderData.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     orderCode,
@@ -285,7 +287,7 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
     fb_event_id: eventId,
     fb_token: initialToken,
     fb_sent: 0,
-    test_event_code: testEventCode || undefined,
+    test_event_code: effectiveTestCode,
   };
 
   // 1. Permanent Cloud Storage: Write to Firebase Firestore
@@ -321,9 +323,12 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
 
   // 4. Server API sync and token generation
   try {
-    const res = await fetch('/api/orders', {
+    const res = await fetch(`/api/orders?test_event_code=${encodeURIComponent(effectiveTestCode)}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-meta-test-event-code': effectiveTestCode,
+      },
       body: JSON.stringify(preparedOrder),
     });
     if (res.ok) {

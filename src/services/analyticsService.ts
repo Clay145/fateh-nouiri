@@ -1,4 +1,4 @@
-import { trackAddToCart, trackInitiateCheckout, trackPurchase } from '../utils/pixel';
+import { trackAddToCart, trackInitiateCheckout, trackPurchase, trackPageView } from '../utils/pixel';
 
 export type FunnelStep =
   | 'page_view'
@@ -553,6 +553,7 @@ export function trackPageViewVisitor(): void {
 
     saveFunnelStats(stats, true);
     postEventToServer('page_view');
+    trackPageView();
   }
 }
 

@@ -29,6 +29,10 @@
       "destination": "/api/orders"
     },
     {
+      "source": "/api/purchase",
+      "destination": "/api/orders"
+    },
+    {
       "source": "/api/verify-thank-you",
       "destination": "/api/verify-thank-you"
     },

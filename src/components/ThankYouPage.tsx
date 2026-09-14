@@ -49,6 +49,11 @@ export const ThankYouPage: React.FC = () => {
     // 2. التحقق من السيرفر وقاعدة البيانات: هل التوكن سليم؟ وهل fb_sent = 0؟
     async function verifyAndFire() {
       try {
+        // Fire standard PageView for Thank You page
+        if (typeof (window as any).fbq === 'function') {
+          (window as any).fbq('track', 'PageView');
+        }
+
         let data: VerificationResult | null = null;
 
         // محاولة الاتصال بالخادم أولاً

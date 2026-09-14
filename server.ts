@@ -194,12 +194,12 @@ async function processMetaCapiPurchase(
     ],
   };
 
-  const testEventCode = clientContext.testEventCode || process.env.META_TEST_EVENT_CODE || process.env.TEST_EVENT_CODE;
+  const testEventCode = clientContext.testEventCode || process.env.META_TEST_EVENT_CODE || process.env.TEST_EVENT_CODE || 'TEST45919';
   if (testEventCode) {
     payload.test_event_code = String(testEventCode).trim();
-    console.log(`[Meta CAPI v20.0] Attached test_event_code: ${payload.test_event_code}`);
   }
 
+  const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
   const matchScore = calculateMatchScore(userData);
   const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN;
 
@@ -208,7 +208,10 @@ async function processMetaCapiPurchase(
 
   if (accessToken) {
     try {
-      const metaUrl = `https://graph.facebook.com/v20.0/${META_PIXEL_ID}/events?access_token=${accessToken}`;
+      console.log(
+        `[Meta CAPI v20.0] Sending Server Purchase: order=${orderCode}, event_id=${canonicalEventId}, test_event_code=${payload.test_event_code || 'none'}, pixel=${effectivePixelId}`
+      );
+      const metaUrl = `https://graph.facebook.com/v20.0/${effectivePixelId}/events?access_token=${accessToken}`;
       const response = await fetch(metaUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -216,17 +219,24 @@ async function processMetaCapiPurchase(
       });
 
       const resJson = await response.json();
+      console.log(`[Meta CAPI Response] Status: ${response.status}`, JSON.stringify(resJson));
+
       if (response.ok && resJson.events_received) {
         finalStatus = 'sent_to_meta';
         responseText = `Success: ${resJson.events_received} event(s) received by Meta CAPI. Deduplication matching active.`;
+        console.log(`[Meta CAPI Success] Received ${resJson.events_received} event(s) for order ${orderCode}. event_id: ${canonicalEventId}`);
       } else {
         responseText = `Meta Graph API Notice: ${JSON.stringify(resJson)}`;
+        console.error(`[Meta CAPI Error] Meta API Error for order ${orderCode}:`, JSON.stringify(resJson.error || resJson));
       }
     } catch (err: any) {
-      console.warn('[Meta CAPI Request Warning]', err?.message || err);
+      console.error('[Meta CAPI Request Failed]', err?.message || err);
       responseText = `CAPI request network status: ${err?.message || 'Offline/Local'}`;
     }
   } else {
+    console.error(
+      `[Meta CAPI Error] META_CONVERSIONS_API_ACCESS_TOKEN is missing in environment variables! Cannot send CAPI Purchase event for order ${orderCode}. Make sure it is added in Vercel Dashboard > Settings > Environment Variables for Preview & Production.`
+    );
     finalStatus = 'deduplicated_matched';
     responseText = `Deduplication ready: event_id "${canonicalEventId}" formatted. Matches Browser Pixel.`;
   }
@@ -648,6 +658,7 @@ async function startServer() {
 
   app.post('/api/orders', handleCreateOrder);
   app.post('/api/create-order', handleCreateOrder);
+  app.post('/api/purchase', handleCreateOrder);
   app.post('/api/create-order.php', handleCreateOrder);
 
   // Verification endpoint for Thank-You page: checks order_id, token, and fb_sent

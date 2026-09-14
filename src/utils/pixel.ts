@@ -298,12 +298,35 @@ export function trackPurchase(params: {
 }
 
 /**
- * Custom tracking helper
+ * Standard PageView tracking helper
+ */
+export function trackPageView(): void {
+  if (typeof window !== 'undefined' && typeof window.fbq === 'function') {
+    try {
+      window.fbq('track', 'PageView');
+      console.log(
+        '%c[Meta Pixel] %cTracked "PageView" (Standard Event)',
+        'color: #1877f2; font-weight: bold',
+        'color: #059669; font-weight: bold'
+      );
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Custom tracking helper - strictly routes standard events like PageView to fbq('track', ...)
  */
 export function trackPixelCustom(eventName: string, parameters?: Record<string, unknown>): void {
   if (typeof window !== 'undefined' && typeof window.fbq === 'function') {
     try {
-      window.fbq('trackCustom', eventName, parameters);
+      const standardEvents = ['PageView', 'Purchase', 'AddToCart', 'InitiateCheckout', 'ViewContent', 'Lead', 'Contact'];
+      if (standardEvents.includes(eventName)) {
+        window.fbq('track', eventName, parameters);
+      } else {
+        window.fbq('trackCustom', eventName, parameters);
+      }
     } catch {
       // ignore
     }

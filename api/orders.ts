@@ -82,12 +82,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const fb_token = body.fb_token || (Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2));
     const fb_sent = 0;
 
-    // Extract test_event_code from query, body, header, or environment
+    // Extract test_event_code from query, body, header, or environment (Default: TEST45919)
     const testEventCode = (req.query.test_event_code as string) ||
                           (body.test_event_code as string) ||
                           (req.headers['x-meta-test-event-code'] as string) ||
                           process.env.META_TEST_EVENT_CODE ||
-                          process.env.TEST_EVENT_CODE;
+                          process.env.TEST_EVENT_CODE ||
+                          'TEST45919';
 
     const newOrder = {
       id: body.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -113,8 +114,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
 
     // Server-side Meta CAPI v20.0 dispatch
+    const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
     const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN;
-    if (accessToken) {
+
+    if (!accessToken) {
+      console.error(
+        `[Meta CAPI Error] META_CONVERSIONS_API_ACCESS_TOKEN is missing or undefined in Vercel environment variables! Cannot send CAPI Purchase event for order ${orderCode}. Make sure it is added in Vercel Dashboard > Settings > Environment Variables for Preview & Production.`
+      );
+    } else {
       try {
         const userData: Record<string, unknown> = {
           ph: [hashSha256(cleanPhone)],
@@ -159,21 +166,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (testEventCode) {
           capiPayload.test_event_code = String(testEventCode).trim();
-          console.log(`[Vercel CAPI v20.0] Attached test_event_code: ${capiPayload.test_event_code}`);
         }
 
-        const metaRes = await fetch(`https://graph.facebook.com/v20.0/${META_PIXEL_ID}/events?access_token=${accessToken}`, {
+        console.log(
+          `[Meta CAPI] Dispatching Server Purchase: order=${orderCode}, event_id=${eventId}, test_event_code=${capiPayload.test_event_code || 'none'}, pixel=${effectivePixelId}`
+        );
+
+        const metaRes = await fetch(`https://graph.facebook.com/v20.0/${effectivePixelId}/events?access_token=${accessToken}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(capiPayload),
         });
 
         const metaData = await metaRes.json();
+        console.log(`[Meta CAPI Response] HTTP ${metaRes.status}:`, JSON.stringify(metaData));
+
         if (metaRes.ok && metaData.events_received) {
+          console.log(`[Meta CAPI Success] Received ${metaData.events_received} event(s) for order ${orderCode}. event_id: ${eventId}`);
           newOrder.capiStatus = 'sent';
+        } else {
+          console.error(`[Meta CAPI Error] Meta Graph API returned error:`, JSON.stringify(metaData.error || metaData));
         }
-      } catch (capiErr) {
-        console.warn('[Vercel CAPI Notice]', capiErr);
+      } catch (capiErr: any) {
+        console.error('[Meta CAPI Request Failed]', capiErr?.message || capiErr);
       }
     }
 
