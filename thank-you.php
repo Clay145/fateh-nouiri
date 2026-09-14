@@ -182,7 +182,7 @@ $order_value = $order_data && isset($order_data['totalPrice']) ? (float)$order_d
             </div>
             <div class="row">
                 <span>المبلغ الإجمالي مع التوصيل:</span>
-                <span><?php echo number_format($order_value, 0, '.', ' '); ?> دج</span>
+                <span><?php echo number_format($order_value, 0, '.', ' '); ?> DZD (دج)</span>
             </div>
         </div>
 

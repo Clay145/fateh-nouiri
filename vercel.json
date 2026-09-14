@@ -45,6 +45,14 @@
       "destination": "/api/mark-fb-sent"
     },
     {
+      "source": "/api/meta/status",
+      "destination": "/api/meta-status"
+    },
+    {
+      "source": "/api/meta/test-event",
+      "destination": "/api/meta-test-event"
+    },
+    {
       "source": "/api/analytics/:path*",
       "destination": "/api/analytics?path=:path*"
     },

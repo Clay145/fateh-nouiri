@@ -268,7 +268,7 @@ export const ThankYouPage: React.FC = () => {
               </div>
               <div className="flex justify-between items-center pt-1 font-bold text-sm sm:text-base text-[#7dd3fc]">
                 <span>المبلغ الإجمالي مع التوصيل:</span>
-                <span>{verification.value?.toLocaleString()} دج</span>
+                <span>{verification.value?.toLocaleString()} DZD (دج)</span>
               </div>
             </div>
 

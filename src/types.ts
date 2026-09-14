@@ -34,6 +34,8 @@ export interface PlacedOrder {
   status?: OrderStatus;
   notes?: string;
   // Meta Pixel & CAPI Deduplication metadata
+  currency?: string;
+  test_event_code?: string;
   eventId?: string;
   fb_event_id?: string;
   fb_token?: string;

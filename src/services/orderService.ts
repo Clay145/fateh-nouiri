@@ -252,6 +252,21 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
   const initialToken = orderData.fb_token || (Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2));
   const eventId = `purchase_${orderCode}`;
 
+  // Capture test_event_code from URL parameters or storage (Meta Events Manager test parameter)
+  let testEventCode: string | null = null;
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    testEventCode = urlParams.get('test_event_code') || 
+                    urlParams.get('testEventCode') || 
+                    sessionStorage.getItem('meta_test_event_code') || 
+                    localStorage.getItem('meta_test_event_code');
+    if (urlParams.get('test_event_code')) {
+      sessionStorage.setItem('meta_test_event_code', urlParams.get('test_event_code')!);
+    }
+  } catch {
+    // browser sandbox
+  }
+
   const preparedOrder: PlacedOrder = {
     id: orderData.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     orderCode,
@@ -261,6 +276,7 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
     commune: String(orderData.commune || '').trim(),
     packageTitle: orderData.packageTitle || 'جهاز مساج Theoria',
     totalPrice: Number(orderData.totalPrice) || 9500,
+    currency: 'DZD',
     date: orderData.date || new Date().toLocaleDateString('ar-DZ', { year: 'numeric', month: 'long', day: 'numeric' }),
     createdAt: orderData.createdAt || Date.now(),
     status: 'جديد',
@@ -269,6 +285,7 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
     fb_event_id: eventId,
     fb_token: initialToken,
     fb_sent: 0,
+    test_event_code: testEventCode || undefined,
   };
 
   // 1. Permanent Cloud Storage: Write to Firebase Firestore

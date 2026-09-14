@@ -167,7 +167,7 @@ async function processMetaCapiPurchase(
 
   const customData = {
     currency: 'DZD',
-    value: order.totalPrice,
+    value: Number(order.totalPrice) || 9500,
     order_id: orderCode,
     content_name: order.packageTitle || 'جهاز مساج واسترخاء العينين Theoria',
     content_type: 'product',
@@ -175,7 +175,7 @@ async function processMetaCapiPurchase(
       {
         id: 'theoria_eye_massager_pro',
         quantity: 1,
-        item_price: order.totalPrice,
+        item_price: Number(order.totalPrice) || 9500,
       },
     ],
   };
@@ -194,9 +194,10 @@ async function processMetaCapiPurchase(
     ],
   };
 
-  const testEventCode = clientContext.testEventCode || process.env.META_TEST_EVENT_CODE;
+  const testEventCode = clientContext.testEventCode || process.env.META_TEST_EVENT_CODE || process.env.TEST_EVENT_CODE;
   if (testEventCode) {
-    payload.test_event_code = testEventCode;
+    payload.test_event_code = String(testEventCode).trim();
+    console.log(`[Meta CAPI v20.0] Attached test_event_code: ${payload.test_event_code}`);
   }
 
   const matchScore = calculateMatchScore(userData);
@@ -600,6 +601,11 @@ async function startServer() {
     const userAgent = req.headers['user-agent'] || '';
     const host = req.headers.host || 'theoriastore.com';
     const thankYouUrl = `https://${host}/thank-you?order_id=${encodeURIComponent(orderCode)}&token=${encodeURIComponent(fb_token)}`;
+    const testEventCode = (req.query.test_event_code as string) || 
+                          (body.test_event_code as string) || 
+                          (req.headers['x-meta-test-event-code'] as string) || 
+                          process.env.META_TEST_EVENT_CODE || 
+                          process.env.TEST_EVENT_CODE;
 
     try {
       const capiResult = await processMetaCapiPurchase(newOrder, {
@@ -608,6 +614,7 @@ async function startServer() {
         ip: clientIp,
         userAgent,
         referer: thankYouUrl,
+        testEventCode,
       });
       newOrder.capiStatus = capiResult.status === 'sent_to_meta' ? 'sent' : capiResult.deduplicated ? 'deduplicated' : 'test_mode';
     } catch (capiErr) {
@@ -632,6 +639,8 @@ async function startServer() {
         eventId: fb_event_id,
         pixelId: META_PIXEL_ID,
         capiStatus: newOrder.capiStatus,
+        testEventCode: testEventCode ? String(testEventCode).trim() : null,
+        currency: 'DZD',
         matchQuality: '9.3 / 10',
       },
     });
