@@ -189,7 +189,7 @@ export async function getOrders(): Promise<PlacedOrder[]> {
     orderMap.set(o.id || o.orderCode, o);
   });
 
-  // 1. Primary Source of Truth: Cloud Firestore
+  // 1. Fetch from Cloud Firestore (primary cross-device persistent store)
   try {
     const ordersCol = collection(db, FIRESTORE_ORDERS_COLLECTION);
     const q = query(ordersCol, orderBy('createdAt', 'desc'));
@@ -209,26 +209,36 @@ export async function getOrders(): Promise<PlacedOrder[]> {
       });
     }
   } catch (firestoreError) {
-    console.warn('Firestore fetch query failed, falling back to server API / local:', firestoreError);
+    console.warn('Firestore fetch query warning:', firestoreError);
+  }
 
-    // 2. Secondary fallback: Express API endpoint
-    try {
-      const token = getAdminToken();
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+  // 2. Always fetch and merge from Server API (ensures orders submitted via backend from other phones/devices are included)
+  try {
+    const token = getAdminToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch('/api/orders', { headers });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && Array.isArray(data.orders)) {
-          data.orders
-            .filter((o: PlacedOrder) => o.id !== 'ord_1' && o.id !== 'ord_2' && o.id !== 'ord_3' && !o.notes?.includes('طلب تجريبي'))
-            .forEach((o: PlacedOrder) => orderMap.set(o.id || o.orderCode, o));
-        }
+    const res = await fetch('/api/orders', { headers });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && Array.isArray(data.orders)) {
+        data.orders
+          .filter((o: PlacedOrder) => o.id !== 'ord_1' && o.id !== 'ord_2' && o.id !== 'ord_3' && !o.notes?.includes('طلب تجريبي'))
+          .forEach((o: PlacedOrder) => {
+            const key = o.id || o.orderCode;
+            // Prefer existing firestore data if present, or fill in server order
+            if (!orderMap.has(key)) {
+              orderMap.set(key, o);
+            } else {
+              // Merge in server details if newer
+              const existing = orderMap.get(key)!;
+              orderMap.set(key, { ...existing, ...o });
+            }
+          });
       }
-    } catch {
-      // Backend unavailable, continue with what we have
     }
+  } catch (serverErr) {
+    console.warn('Server orders API warning:', serverErr);
   }
 
   const merged = Array.from(orderMap.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -535,7 +545,46 @@ export function subscribeToRealtimeOrders(callbacks: {
     console.warn('Could not initialize Firestore onSnapshot listener:', err);
   }
 
-  // 2. BroadcastChannel handler
+  // 2. Server-Sent Events (SSE) stream for real-time notifications across multiple devices/phones
+  let eventSource: EventSource | null = null;
+  try {
+    const adminToken = getAdminToken();
+    const sseUrl = adminToken ? `/api/orders/stream?token=${encodeURIComponent(adminToken)}` : '/api/orders/stream';
+    eventSource = new EventSource(sseUrl);
+
+    eventSource.onmessage = (e) => {
+      try {
+        if (!e.data || e.data.startsWith(':')) return;
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'CONNECTED') {
+          callbacks.onConnectionChange?.(true);
+        } else if (msg.type === 'NEW_ORDER' && msg.payload) {
+          const order: PlacedOrder = msg.payload;
+          const key = order.id || order.orderCode;
+          if (!knownIds.has(key)) {
+            knownIds.add(key);
+            callbacks.onNewOrder(order);
+          }
+        } else if (msg.type === 'ORDER_UPDATED' && msg.payload) {
+          callbacks.onUpdateOrder(msg.payload);
+        } else if (msg.type === 'ORDER_DELETED' && msg.payload) {
+          const id = msg.payload.id || msg.payload;
+          knownIds.delete(id);
+          callbacks.onDeleteOrder(id);
+        }
+      } catch (err) {
+        console.warn('Error handling SSE order stream message:', err);
+      }
+    };
+
+    eventSource.onerror = () => {
+      // EventSource automatically attempts reconnect
+    };
+  } catch (sseErr) {
+    console.warn('Could not initialize SSE connection:', sseErr);
+  }
+
+  // 3. BroadcastChannel handler
   const handleBroadcast = (event: MessageEvent) => {
     if (!event.data) return;
     const { type, order, id } = event.data;
@@ -557,7 +606,7 @@ export function subscribeToRealtimeOrders(callbacks: {
     channel.addEventListener('message', handleBroadcast);
   }
 
-  // 3. Window Storage Event listener (triggers across tabs in same browser)
+  // 4. Window Storage Event listener (triggers across tabs in same browser)
   const handleStorageChange = (e: StorageEvent) => {
     if (e.key === STORAGE_KEY && e.newValue) {
       try {
@@ -581,8 +630,8 @@ export function subscribeToRealtimeOrders(callbacks: {
   };
   window.addEventListener('storage', handleStorageChange);
 
-  // 4. Fallback Polling (polls /api/orders every 15 seconds)
-  pollingTimer = window.setInterval(async () => {
+  // 5. Active Fallback Polling (polls /api/orders and Firestore every 5 seconds)
+  const pollOrders = async () => {
     if (isClosed) return;
     try {
       const currentOrders = await getOrders();
@@ -596,11 +645,19 @@ export function subscribeToRealtimeOrders(callbacks: {
     } catch {
       // ignore
     }
-  }, 15000);
+  };
+
+  // Immediate poll after 1 second, then every 5 seconds
+  const initialPollTimeout = window.setTimeout(pollOrders, 1000);
+  pollingTimer = window.setInterval(pollOrders, 5000);
 
   return () => {
     isClosed = true;
+    clearTimeout(initialPollTimeout);
     if (unsubscribeFirestore) unsubscribeFirestore();
+    if (eventSource) {
+      eventSource.close();
+    }
     if (pollingTimer) clearInterval(pollingTimer);
     if (channel) channel.removeEventListener('message', handleBroadcast);
     window.removeEventListener('storage', handleStorageChange);

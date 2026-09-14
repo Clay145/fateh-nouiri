@@ -5,7 +5,7 @@
   "reachedCheckoutForm": 0,
   "startedFillingForm": 0,
   "validationFailed": 0,
-  "completedPurchases": 8,
+  "completedPurchases": 9,
   "fieldDropOffs": {
     "fullname": 0,
     "phone": 0,
@@ -17,6 +17,6 @@
     "desktop": 0
   },
   "sources": {},
-  "lastUpdated": 1789375275403,
+  "lastUpdated": 1789397366416,
   "recentSessions": []
 }
