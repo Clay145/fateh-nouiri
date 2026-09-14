@@ -115,7 +115,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Server-side Meta CAPI v20.0 dispatch
     const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
-    const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN;
+    const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSbaBejwOJlzDpbuZA3CPgOvcb29xVQFdBcr4bsDOKtkvYLHUDquzjXyTHJJGgid7W8JOxd0XaBleUmKEZAsPKM33twrhNCkSy9gfwrKVwiJgn6CJZBNTN6SnVgojuSiS5r77t60AoRIE2Qocx97GAIgK8vtc5u2gqdFN0SRYgfvfczOjgZDZD';
+    const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || FALLBACK_CAPI_TOKEN;
 
     if (!accessToken) {
       console.error(
@@ -127,6 +128,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ph: [hashSha256(cleanPhone)],
           country: [hashSha256('dz')],
         };
+        const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() || (req.headers['x-real-ip'] as string) || undefined;
+        const clientUa = (req.headers['user-agent'] as string) || undefined;
+        if (clientIp) userData.client_ip_address = clientIp;
+        if (clientUa) userData.client_user_agent = clientUa;
         const nameParts = String(body.customerName).trim().split(/\s+/);
         if (nameParts[0]) userData.fn = [hashSha256(nameParts[0])];
         if (nameParts.length > 1) userData.ln = [hashSha256(nameParts.slice(1).join(' '))];

@@ -55,7 +55,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     eventId: testEventId,
   };
 
-  const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN;
+  const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSbaBejwOJlzDpbuZA3CPgOvcb29xVQFdBcr4bsDOKtkvYLHUDquzjXyTHJJGgid7W8JOxd0XaBleUmKEZAsPKM33twrhNCkSy9gfwrKVwiJgn6CJZBNTN6SnVgojuSiS5r77t60AoRIE2Qocx97GAIgK8vtc5u2gqdFN0SRYgfvfczOjgZDZD';
+  const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || FALLBACK_CAPI_TOKEN;
   let metaResult: any = { status: 'simulated_local', message: 'Ready for Meta test' };
 
   if (accessToken) {
