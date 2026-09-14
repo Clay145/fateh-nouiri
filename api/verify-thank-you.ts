@@ -79,7 +79,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                             (req.headers['x-meta-test-event-code'] as string) ||
                             process.env.META_TEST_EVENT_CODE ||
                             process.env.TEST_EVENT_CODE ||
-                            'TEST45919';
+                            undefined;
 
       if (!accessToken) {
         console.error(
@@ -112,12 +112,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (order?.fbp) userData.fbp = order.fbp;
           if (order?.fbc) userData.fbc = order.fbc;
 
+          const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+          const effectiveCurrency = metaCurrency === 'DZD' ? 'DZD' : (metaCurrency === 'EUR' ? 'EUR' : 'USD');
+          const effectiveValue = effectiveCurrency === 'USD'
+            ? Number((orderValue / 135).toFixed(2))
+            : (effectiveCurrency === 'EUR' ? Number((orderValue / 145).toFixed(2)) : orderValue);
+
           const customData = {
-            value: orderValue,
-            currency: 'DZD',
+            value: effectiveValue,
+            currency: effectiveCurrency,
             order_id,
             content_name: order?.packageTitle || 'جهاز مساج واسترخاء العينين Theoria',
             content_type: 'product',
+            original_currency: 'DZD',
+            original_value: orderValue,
           };
 
           const capiPayload: Record<string, unknown> = {

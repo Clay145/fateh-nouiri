@@ -252,22 +252,24 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
   const initialToken = orderData.fb_token || (Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2));
   const eventId = `purchase_${orderCode}`;
 
-  // Capture test_event_code from URL parameters or storage (Meta Events Manager test parameter)
-  let testEventCode: string | null = null;
+  // Capture test_event_code only if explicitly provided in URL query parameters for Meta Events Manager testing
+  let testEventCode: string | undefined = undefined;
   try {
     const urlParams = new URLSearchParams(window.location.search);
-    testEventCode = urlParams.get('test_event_code') || 
-                    urlParams.get('testEventCode') || 
-                    sessionStorage.getItem('meta_test_event_code') || 
-                    localStorage.getItem('meta_test_event_code');
-    if (urlParams.get('test_event_code')) {
-      sessionStorage.setItem('meta_test_event_code', urlParams.get('test_event_code')!);
+    const codeFromUrl = urlParams.get('test_event_code') || urlParams.get('testEventCode');
+    if (codeFromUrl) {
+      testEventCode = codeFromUrl;
+      sessionStorage.setItem('meta_test_event_code', codeFromUrl);
+    } else {
+      // Clear any previous test code in production
+      sessionStorage.removeItem('meta_test_event_code');
+      localStorage.removeItem('meta_test_event_code');
     }
   } catch {
     // browser sandbox
   }
 
-  const effectiveTestCode = testEventCode || 'TEST45919';
+  const effectiveTestCode = testEventCode;
 
   const preparedOrder: PlacedOrder = {
     id: orderData.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -323,12 +325,19 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
 
   // 4. Server API sync and token generation
   try {
-    const res = await fetch(`/api/orders?test_event_code=${encodeURIComponent(effectiveTestCode)}`, {
+    const apiEndpoint = effectiveTestCode
+      ? `/api/orders?test_event_code=${encodeURIComponent(effectiveTestCode)}`
+      : `/api/orders`;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (effectiveTestCode) {
+      headers['x-meta-test-event-code'] = effectiveTestCode;
+    }
+
+    const res = await fetch(apiEndpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-meta-test-event-code': effectiveTestCode,
-      },
+      headers,
       body: JSON.stringify(preparedOrder),
     });
     if (res.ok) {

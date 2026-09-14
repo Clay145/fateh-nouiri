@@ -19,7 +19,7 @@
     <!-- Facebook Domain Verification -->
     <meta name="facebook-domain-verification" content="cpqahe9xyvt1w33dri431iguk4lavp" />
 
-    <!-- Meta Pixel Code -->
+    <!-- Meta Pixel Code with Strict Protection against premature Purchase on #order_form -->
     <script>
       !function(f,b,e,v,n,t,s)
       {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
@@ -29,8 +29,37 @@
       t.src=v;s=b.getElementsByTagName(e)[0];
       s.parentNode.insertBefore(t,s)}(window, document,'script',
       'https://connect.facebook.net/en_US/fbevents.js');
+      
+      // 1. Disable autoConfig so Meta Pixel does NOT automatically guess/trigger Purchase on buttons/forms
+      fbq('set', 'autoConfig', false, '28477410788542282');
       fbq('init', '28477410788542282');
       fbq('track', 'PageView');
+
+      // 2. Strict Interceptor Guard: Permanently block any 'Purchase' event on #order_form / landing page
+      (function() {
+        var nativeFbq = window.fbq;
+        window.fbq = function() {
+          var action = arguments[0];
+          var eventName = arguments[1];
+          if (action === 'track' && eventName === 'Purchase') {
+            var fullUrl = window.location.href;
+            var isThankYou = window.location.pathname.indexOf('/thank-you') !== -1 ||
+                             window.location.search.indexOf('order_id=') !== -1 ||
+                             window.location.hash.indexOf('thank-you') !== -1;
+            var isOrderForm = fullUrl.indexOf('#order-form') !== -1 ||
+                              fullUrl.indexOf('#order_form') !== -1 ||
+                              window.location.hash.indexOf('order') !== -1;
+
+            if (isOrderForm || !isThankYou) {
+              console.warn(
+                '[Meta Pixel Guard] BLOCKED Purchase event on #order_form / landing page! Purchase is strictly permitted only ONCE after genuine order creation on the Thank You page.'
+              );
+              return;
+            }
+          }
+          return nativeFbq.apply(this, arguments);
+        };
+      })();
     </script>
     <!-- End Meta Pixel Code -->
   </head>

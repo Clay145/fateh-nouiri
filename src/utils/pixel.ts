@@ -147,6 +147,23 @@ export function trackPixelEvent(
 ): void {
   if (typeof window === 'undefined') return;
 
+  // Strict Protection: Purchase is strictly forbidden on #order_form or the main landing page
+  if (eventName === 'Purchase') {
+    const fullUrl = window.location.href;
+    const isOrderForm = fullUrl.includes('#order-form') ||
+                        fullUrl.includes('#order_form') ||
+                        window.location.hash.includes('order');
+    const isThankYouPage = window.location.pathname.includes('thank-you') ||
+                           window.location.search.includes('order_id');
+
+    if (isOrderForm || !isThankYouPage) {
+      console.warn(
+        '[Meta Pixel Protection Shield] Blocked Purchase on #order_form! Purchase is fired strictly once on the Thank You page after a real order is created.'
+      );
+      return;
+    }
+  }
+
   const eventId = options?.eventID;
 
   if (typeof window.fbq === 'function') {
@@ -190,6 +207,25 @@ export function trackPixelEvent(
 }
 
 /**
+ * Calculate compliant currency and value for Meta Pixel
+ * (Meta fbevents.js whitelist only includes 45 major currencies like USD, EUR, SAR, AED, etc.)
+ * For Algerian stores running Meta Ads, USD is the universal standard for Ad Accounts and Pixel reporting.
+ */
+export function getMetaConversionAmount(dzdAmount: number = 9500): { value: number; currency: string } {
+  const metaCurrency = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_META_CURRENCY
+    ? (import.meta as any).env.VITE_META_CURRENCY
+    : 'USD').toUpperCase();
+
+  if (metaCurrency === 'DZD') {
+    return { value: dzdAmount, currency: 'DZD' };
+  }
+  if (metaCurrency === 'EUR') {
+    return { value: Number((dzdAmount / 145).toFixed(2)), currency: 'EUR' };
+  }
+  return { value: Number((dzdAmount / 135).toFixed(2)), currency: 'USD' };
+}
+
+/**
  * AddToCart event (when visitor clicks "اطلب الآن")
  */
 export function trackAddToCart(params?: {
@@ -199,12 +235,17 @@ export function trackAddToCart(params?: {
   event_id?: string;
 }): void {
   const eventId = params?.event_id || `atc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const rawValue = params?.value || 9500;
+  const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(rawValue);
+
   const defaultParams = {
     content_name: params?.content_name || 'جهاز مساج واسترخاء العينين Theoria',
     content_type: 'product',
     content_ids: ['theoria_eye_massager_pro'],
-    value: params?.value || 9500,
-    currency: params?.currency || 'DZD',
+    value: metaValue,
+    currency: metaCurrency,
+    original_value: rawValue,
+    original_currency: 'DZD',
     num_items: 1,
   };
 
@@ -222,12 +263,17 @@ export function trackInitiateCheckout(params?: {
   event_id?: string;
 }): void {
   const eventId = params?.event_id || `ic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const rawValue = params?.value || 9500;
+  const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(rawValue);
+
   const defaultParams = {
     content_name: params?.content_name || 'جهاز مساج واسترخاء العينين Theoria',
     content_type: 'product',
     content_ids: ['theoria_eye_massager_pro'],
-    value: params?.value || 9500,
-    currency: params?.currency || 'DZD',
+    value: metaValue,
+    currency: metaCurrency,
+    original_value: rawValue,
+    original_currency: 'DZD',
     num_items: params?.num_items || 1,
   };
 
@@ -252,6 +298,15 @@ export function trackPurchase(params: {
     return false;
   }
 
+  // Strict check: Block if attempting to fire from order form
+  if (typeof window !== 'undefined') {
+    const fullUrl = window.location.href;
+    if (fullUrl.includes('#order-form') || fullUrl.includes('#order_form') || window.location.hash.includes('order')) {
+      console.warn('[Meta Pixel Shield] Purchase event strictly blocked on #order_form! Purchase fires ONLY on thank you page after order submission.');
+      return false;
+    }
+  }
+
   // 1. DEDUPLICATION CHECK: Check if this order_id has already been fired
   if (hasPurchaseFired(orderCode)) {
     console.warn(
@@ -272,15 +327,19 @@ export function trackPurchase(params: {
 
   // 2. Generate canonical eventID shared with Server CAPI
   const canonicalEventId = params.event_id || generatePurchaseEventId(orderCode);
+  const rawPrice = Number(params.value) || 9500;
+  const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(rawPrice);
 
   const payload: Record<string, unknown> = {
-    value: Number(params.value) || 9500,
-    currency: params.currency || 'DZD',
+    value: metaValue,
+    currency: metaCurrency,
     content_name: params.content_name || 'جهاز مساج واسترخاء العينين Theoria',
     content_type: 'product',
     content_ids: ['theoria_eye_massager_pro'],
     num_items: 1,
     order_id: orderCode,
+    original_value: rawPrice,
+    original_currency: 'DZD',
   };
 
   // Attach client context matching parameters

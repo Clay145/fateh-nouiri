@@ -82,13 +82,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const fb_token = body.fb_token || (Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2));
     const fb_sent = 0;
 
-    // Extract test_event_code from query, body, header, or environment (Default: TEST45919)
+    // Extract test_event_code only if explicitly provided in query, body, header, or environment (Production default: undefined)
     const testEventCode = (req.query.test_event_code as string) ||
                           (body.test_event_code as string) ||
                           (req.headers['x-meta-test-event-code'] as string) ||
                           process.env.META_TEST_EVENT_CODE ||
                           process.env.TEST_EVENT_CODE ||
-                          'TEST45919';
+                          undefined;
 
     const newOrder = {
       id: body.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -110,7 +110,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       fb_sent,
       fbp: body.fbp,
       fbc: body.fbc,
-      capiStatus: 'test_mode',
+      capiStatus: testEventCode ? 'test_mode' : 'pending',
     };
 
     // Server-side Meta CAPI v20.0 dispatch
@@ -140,17 +140,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (body.fbp) userData.fbp = body.fbp;
         if (body.fbc) userData.fbc = body.fbc;
 
+        // Meta CAPI standard currency conversion: USD is the primary accepted currency for Algerian Ad accounts & fbevents.js
+        const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+        const effectiveCurrency = metaCurrency === 'DZD' ? 'DZD' : (metaCurrency === 'EUR' ? 'EUR' : 'USD');
+        const effectiveValue = effectiveCurrency === 'USD'
+          ? Number((newOrder.totalPrice / 135).toFixed(2))
+          : (effectiveCurrency === 'EUR' ? Number((newOrder.totalPrice / 145).toFixed(2)) : newOrder.totalPrice);
+
         const customData = {
-          currency: 'DZD',
-          value: newOrder.totalPrice,
+          currency: effectiveCurrency,
+          value: effectiveValue,
           order_id: orderCode,
           content_name: newOrder.packageTitle,
           content_type: 'product',
+          original_currency: 'DZD',
+          original_value: newOrder.totalPrice,
           contents: [
             {
               id: 'theoria_eye_massager_pro',
               quantity: 1,
-              item_price: newOrder.totalPrice,
+              item_price: effectiveValue,
             },
           ],
         };

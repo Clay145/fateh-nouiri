@@ -10,6 +10,7 @@ import {
   Layers,
   Sparkles,
 } from 'lucide-react';
+import { getMetaConversionAmount } from '../utils/pixel';
 
 interface VerificationResult {
   valid: boolean;
@@ -152,16 +153,19 @@ export const ThankYouPage: React.FC = () => {
 
           // إطلاق حدث Purchase بالمعرف الموحد eventID
           if (typeof (window as any).fbq === 'function') {
-            console.log('[Meta Pixel] Firing Purchase event with eventID:', EVENT_ID);
+            const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(ORDER_VALUE);
+            console.log('[Meta Pixel] Firing Purchase event with eventID:', EVENT_ID, `(${metaValue} ${metaCurrency})`);
             (window as any).fbq(
               'track',
               'Purchase',
               {
-                value: ORDER_VALUE,
-                currency: 'DZD',
+                value: metaValue,
+                currency: metaCurrency,
                 order_id: ORDER_ID,
                 content_name: data.packageTitle || 'جهاز مساج واسترخاء العينين Theoria',
                 content_type: 'product',
+                original_value: ORDER_VALUE,
+                original_currency: 'DZD',
               },
               { eventID: EVENT_ID }
             );

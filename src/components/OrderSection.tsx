@@ -6,10 +6,8 @@ import { submitOrder } from '../services/orderService';
 import { generatePurchaseEventId, getFbpCookie, getFbcCookie } from '../utils/pixel';
 import {
   trackAddToCartClick,
-  trackFormOpened,
   trackFormFieldEngagement,
   trackValidationFailed,
-  trackPurchaseComplete,
 } from '../services/analyticsService';
 import {
   AlarmClock,
@@ -38,26 +36,6 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
   const [phoneError, setPhoneError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const sectionRef = useRef<HTMLElement | null>(null);
-
-  // Trigger fbq('track', 'InitiateCheckout') when the order form enters the screen
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            trackFormOpened('وصول الزائر لاستمارة الطلب');
-          }
-        });
-      },
-      { threshold: 0.15 }
-    );
-
-    if (sectionRef.current) {
-      observer.observe(sectionRef.current);
-    }
-
-    return () => observer.disconnect();
-  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -151,8 +129,9 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
     <section
       id="order-form"
       ref={sectionRef}
-      className="py-12 sm:py-24 px-4 sm:px-6 lg:px-12 max-w-5xl mx-auto w-full overflow-hidden"
+      className="py-12 sm:py-24 px-4 sm:px-6 lg:px-12 max-w-5xl mx-auto w-full overflow-hidden relative"
     >
+      <div id="order_form" className="absolute -top-24 pointer-events-none" />
       <div className="bg-[#141c2e]/80 backdrop-blur-2xl border-2 border-[#7dd3fc]/30 rounded-3xl p-4 sm:p-10 lg:p-12 shadow-[0_0_60px_rgba(125,211,252,0.15)] relative overflow-hidden">
         {/* Accent Glow Corner */}
         <div className="absolute -top-24 -right-24 w-60 h-60 bg-[#7dd3fc]/20 rounded-full blur-3xl pointer-events-none max-w-full"></div>

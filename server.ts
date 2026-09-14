@@ -165,17 +165,26 @@ async function processMetaCapiPurchase(
   if (clientContext.ip) userData.client_ip_address = clientContext.ip;
   if (clientContext.userAgent) userData.client_user_agent = clientContext.userAgent;
 
+  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+  const effectiveCurrency = metaCurrency === 'DZD' ? 'DZD' : (metaCurrency === 'EUR' ? 'EUR' : 'USD');
+  const rawPrice = Number(order.totalPrice) || 9500;
+  const effectiveValue = effectiveCurrency === 'USD'
+    ? Number((rawPrice / 135).toFixed(2))
+    : (effectiveCurrency === 'EUR' ? Number((rawPrice / 145).toFixed(2)) : rawPrice);
+
   const customData = {
-    currency: 'DZD',
-    value: Number(order.totalPrice) || 9500,
+    currency: effectiveCurrency,
+    value: effectiveValue,
     order_id: orderCode,
     content_name: order.packageTitle || 'جهاز مساج واسترخاء العينين Theoria',
     content_type: 'product',
+    original_currency: 'DZD',
+    original_value: rawPrice,
     contents: [
       {
         id: 'theoria_eye_massager_pro',
         quantity: 1,
-        item_price: Number(order.totalPrice) || 9500,
+        item_price: effectiveValue,
       },
     ],
   };
@@ -186,7 +195,7 @@ async function processMetaCapiPurchase(
         event_name: 'Purchase',
         event_time: Math.floor(Date.now() / 1000),
         event_id: canonicalEventId,
-        event_source_url: clientContext.referer || 'https://theoriastore.com/#order-form',
+        event_source_url: `https://theoriastore.com/thank-you?order_id=${orderCode}&token=${order.fb_token || ''}`,
         action_source: 'website',
         user_data: userData,
         custom_data: customData,
@@ -194,7 +203,7 @@ async function processMetaCapiPurchase(
     ],
   };
 
-  const testEventCode = clientContext.testEventCode || process.env.META_TEST_EVENT_CODE || process.env.TEST_EVENT_CODE || 'TEST45919';
+  const testEventCode = clientContext.testEventCode || process.env.META_TEST_EVENT_CODE || process.env.TEST_EVENT_CODE || undefined;
   if (testEventCode) {
     payload.test_event_code = String(testEventCode).trim();
   }
@@ -785,7 +794,7 @@ async function startServer() {
       ip: clientIp,
       userAgent,
       testEventCode: testCode || process.env.META_TEST_EVENT_CODE,
-      referer: 'https://theoriastore.com/#order-form',
+      referer: 'https://theoriastore.com/thank-you',
     });
 
     res.json({

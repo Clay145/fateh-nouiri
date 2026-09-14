@@ -91,7 +91,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             event_name: 'Purchase',
             event_time: Math.floor(Date.now() / 1000),
             event_id: testEventId,
-            event_source_url: `https://${req.headers.host || 'fateh-nouiri.vercel.app'}/#order-form`,
+            event_source_url: `https://${req.headers.host || 'fateh-nouiri.vercel.app'}/thank-you?order_id=${testOrderCode}&token=token_${testOrderCode}`,
             action_source: 'website',
             user_data: userData,
             custom_data: customData,
