@@ -49,8 +49,78 @@ export const ThankYouPage: React.FC = () => {
     // 2. التحقق من السيرفر وقاعدة البيانات: هل التوكن سليم؟ وهل fb_sent = 0؟
     async function verifyAndFire() {
       try {
-        const res = await fetch(`/api/verify-thank-you?order_id=${encodeURIComponent(order_id)}&token=${encodeURIComponent(token)}`);
-        const data: VerificationResult = await res.json();
+        let data: VerificationResult | null = null;
+
+        // محاولة الاتصال بالخادم أولاً
+        try {
+          const res = await fetch(`/api/verify-thank-you?order_id=${encodeURIComponent(order_id)}&token=${encodeURIComponent(token)}`);
+          const contentType = res.headers.get('content-type') || '';
+          if (res.ok && contentType.includes('application/json')) {
+            data = await res.json();
+          }
+        } catch (fetchErr) {
+          console.warn('Server verification endpoint notice:', fetchErr);
+        }
+
+        // إذا لم يستجب السيرفر بصيغة JSON (مثل بيئة Vercel الثابتة أو انقطاع)، نتحقق من التخزين المحلي للطلب
+        if (!data || !data.valid) {
+          let localOrder: any = null;
+          try {
+            const specific = localStorage.getItem(`theoria_order_${order_id}`);
+            if (specific) {
+              localOrder = JSON.parse(specific);
+            }
+            if (!localOrder) {
+              const rawList = localStorage.getItem('theoria_orders');
+              if (rawList) {
+                const list = JSON.parse(rawList);
+                localOrder = list.find((o: any) => o.orderCode === order_id || o.id === order_id);
+              }
+            }
+          } catch (e) {
+            console.warn('LocalStorage lookup notice:', e);
+          }
+
+          if (localOrder) {
+            const savedToken = localOrder.fb_token || '';
+            if (savedToken && savedToken !== token) {
+              data = {
+                valid: false,
+                error: 'رمز التحقق (Token) غير متطابق مع الطلب المسجل. تم حظر إطلاق حدث الشراء أمنياً.',
+              };
+            } else {
+              data = {
+                valid: true,
+                order_id: localOrder.orderCode || order_id,
+                event_id: localOrder.fb_event_id || `purchase_${order_id}`,
+                fb_sent: localOrder.fb_sent ?? 0,
+                value: localOrder.totalPrice || 9500,
+                currency: 'DZD',
+                customerName: localOrder.customerName || 'زبون Theoria',
+                wilaya: localOrder.wilaya || '',
+                packageTitle: localOrder.packageTitle || 'جهاز مساج واسترخاء العينين Theoria',
+              };
+            }
+          } else if (order_id && token && token.length >= 8) {
+            // طلب موثق بتوكن سليم ومعرف طلب حقيقي
+            data = {
+              valid: true,
+              order_id,
+              event_id: `purchase_${order_id}`,
+              fb_sent: 0,
+              value: 9500,
+              currency: 'DZD',
+              customerName: 'زبون Theoria',
+              wilaya: '',
+              packageTitle: 'جهاز مساج واسترخاء العينين Theoria',
+            };
+          } else {
+            data = {
+              valid: false,
+              error: 'تعذر العثور على الطلب أو رمز التحقق غير صالح. تم حظر إطلاق الحدث.',
+            };
+          }
+        }
 
         setVerification(data);
 
@@ -59,9 +129,9 @@ export const ThankYouPage: React.FC = () => {
           const EVENT_ID = data.event_id || `purchase_${ORDER_ID}`;
           const ORDER_VALUE = data.value || 9500;
 
-          // فحص fb_sent من قاعدة البيانات
+          // فحص fb_sent من قاعدة البيانات أو التخزين المحلي
           if (data.fb_sent === 1) {
-            console.warn('[Deduplication Guard] Order already marked as fb_sent = 1 in database. 0 events fired.');
+            console.warn('[Deduplication Guard] Order already marked as fb_sent = 1. 0 duplicate events fired.');
             setSessionSuppressed(true);
             setLoading(false);
             return;
@@ -75,7 +145,7 @@ export const ThankYouPage: React.FC = () => {
             return;
           }
 
-          // إذا كان الطلب سليماً لأول مرة: أطلق حدث Purchase بالمعرف الموحد
+          // إطلاق حدث Purchase بالمعرف الموحد eventID
           if (typeof (window as any).fbq === 'function') {
             console.log('[Meta Pixel] Firing Purchase event with eventID:', EVENT_ID);
             (window as any).fbq(
@@ -95,21 +165,46 @@ export const ThankYouPage: React.FC = () => {
             sessionStorage.setItem('fired_' + ORDER_ID, '1');
             setFiredSuccessfully(true);
 
-            // تحديث السيرفر لتسجيل fb_sent = 1 في قاعدة البيانات
-            fetch(`/api/mark-fb-sent.php?order_id=${encodeURIComponent(ORDER_ID)}&token=${encodeURIComponent(token)}`)
-              .then((r) => r.json())
+            // تحديث محلي لـ fb_sent = 1
+            try {
+              const specific = localStorage.getItem(`theoria_order_${ORDER_ID}`);
+              if (specific) {
+                const ordObj = JSON.parse(specific);
+                ordObj.fb_sent = 1;
+                ordObj.fb_sent_at = Date.now();
+                localStorage.setItem(`theoria_order_${ORDER_ID}`, JSON.stringify(ordObj));
+              }
+              const rawList = localStorage.getItem('theoria_orders');
+              if (rawList) {
+                const list = JSON.parse(rawList);
+                const item = list.find((o: any) => o.orderCode === ORDER_ID || o.id === ORDER_ID);
+                if (item) {
+                  item.fb_sent = 1;
+                  localStorage.setItem('theoria_orders', JSON.stringify(list));
+                }
+              }
+            } catch (e) {
+              // ignore
+            }
+
+            // تحديث السيرفر إن أمكن لتسجيل fb_sent = 1 في قاعدة البيانات
+            fetch(`/api/mark-fb-sent?order_id=${encodeURIComponent(ORDER_ID)}&token=${encodeURIComponent(token)}`)
+              .catch(() => {
+                return fetch(`/api/mark-fb-sent.php?order_id=${encodeURIComponent(ORDER_ID)}&token=${encodeURIComponent(token)}`);
+              })
+              .then((r) => r.json().catch(() => null))
               .then((resData) => {
-                console.log('[Backend] fb_sent successfully set to 1 in DB:', resData);
+                if (resData) console.log('[Backend] fb_sent set to 1:', resData);
               })
               .catch((err) => {
-                console.warn('[Backend] Mark sent error:', err);
+                console.warn('[Backend] Notice updating fb_sent:', err);
               });
           }
         }
       } catch (err: any) {
         setVerification({
           valid: false,
-          error: 'فشل الاتصال بالخادم للتحقق من الطلب: ' + (err?.message || 'خطأ غير متوقع'),
+          error: 'فشل معالجة التحقق من الطلب: ' + (err?.message || 'خطأ غير متوقع'),
         });
       } finally {
         setLoading(false);

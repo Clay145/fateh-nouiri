@@ -71,6 +71,8 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     const cleanPhone = String(body.phone).replace(/\s+/g, '');
     const orderCode = body.orderCode || `TH-${Math.floor(10000 + Math.random() * 90000)}`;
     const eventId = body.eventId || `purchase_${orderCode}`;
+    const fb_token = body.fb_token || (Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2));
+    const fb_sent = 0;
 
     const newOrder = {
       id: body.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -86,6 +88,9 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
       status: 'جديد',
       notes: body.notes || '',
       eventId,
+      fb_event_id: eventId,
+      fb_token,
+      fb_sent,
       fbp: body.fbp,
       fbc: body.fbc,
       capiStatus: 'test_mode',
@@ -94,9 +99,16 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     if (!global.__THEORIA_ORDERS__) global.__THEORIA_ORDERS__ = [];
     global.__THEORIA_ORDERS__.unshift(newOrder);
 
+    const redirect_url = `/thank-you?order_id=${encodeURIComponent(orderCode)}&token=${encodeURIComponent(fb_token)}`;
+
     return res.status(201).json({
       success: true,
       order: newOrder,
+      order_id: orderCode,
+      token: fb_token,
+      event_id: eventId,
+      fb_sent: 0,
+      redirect_url,
       metaDeduplication: {
         eventId,
         pixelId: '28477410788542282',

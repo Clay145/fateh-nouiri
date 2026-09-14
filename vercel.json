@@ -21,6 +21,30 @@
       "destination": "/api/orders"
     },
     {
+      "source": "/api/create-order",
+      "destination": "/api/orders"
+    },
+    {
+      "source": "/api/create-order.php",
+      "destination": "/api/orders"
+    },
+    {
+      "source": "/api/verify-thank-you",
+      "destination": "/api/verify-thank-you"
+    },
+    {
+      "source": "/api/verify-thank-you.php",
+      "destination": "/api/verify-thank-you"
+    },
+    {
+      "source": "/api/mark-fb-sent",
+      "destination": "/api/mark-fb-sent"
+    },
+    {
+      "source": "/api/mark-fb-sent.php",
+      "destination": "/api/mark-fb-sent"
+    },
+    {
       "source": "/api/analytics/:path*",
       "destination": "/api/analytics?path=:path*"
     },

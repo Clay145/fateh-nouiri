@@ -248,9 +248,13 @@ export async function getOrders(): Promise<PlacedOrder[]> {
  * 4. Syncs with backend API.
  */
 export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<PlacedOrder> {
+  const orderCode = orderData.orderCode || `TH-${Math.floor(10000 + Math.random() * 90000)}`;
+  const initialToken = orderData.fb_token || (Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2));
+  const eventId = `purchase_${orderCode}`;
+
   const preparedOrder: PlacedOrder = {
     id: orderData.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    orderCode: orderData.orderCode || `TH-${Math.floor(10000 + Math.random() * 90000)}`,
+    orderCode,
     customerName: String(orderData.customerName || 'عميل').trim(),
     phone: String(orderData.phone || '').replace(/\s+/g, ''),
     wilaya: orderData.wilaya || 'غير محدد',
@@ -261,6 +265,10 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
     createdAt: orderData.createdAt || Date.now(),
     status: 'جديد',
     notes: orderData.notes || '',
+    eventId,
+    fb_event_id: eventId,
+    fb_token: initialToken,
+    fb_sent: 0,
   };
 
   // 1. Permanent Cloud Storage: Write to Firebase Firestore
@@ -272,13 +280,18 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
   }
 
   // 2. Local persistence in browser storage
-  try {
-    const current = getLocalOrders();
-    const updated = [preparedOrder, ...current.filter((o) => o.id !== preparedOrder.id && o.orderCode !== preparedOrder.orderCode)];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-  } catch (e) {
-    console.error('LocalStorage write failed:', e);
-  }
+  const saveToLocal = (ord: PlacedOrder) => {
+    try {
+      const current = getLocalOrders();
+      const updated = [ord, ...current.filter((o) => o.id !== ord.id && o.orderCode !== ord.orderCode)];
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      localStorage.setItem(`theoria_order_${ord.orderCode}`, JSON.stringify(ord));
+    } catch (e) {
+      console.error('LocalStorage write failed:', e);
+    }
+  };
+
+  saveToLocal(preparedOrder);
 
   // 3. Broadcast across tabs (BroadcastChannel + Window Storage event)
   if (channel) {
@@ -309,16 +322,10 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
       if (data.order && data.order.orderCode) {
         preparedOrder.orderCode = data.order.orderCode;
       }
+      saveToLocal(preparedOrder);
     }
   } catch (err) {
     console.warn('API sync notice:', err);
-  }
-
-  // Ensure fb_token is set even if completely offline
-  if (!preparedOrder.fb_token) {
-    preparedOrder.fb_token = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
-    preparedOrder.fb_event_id = `purchase_${preparedOrder.orderCode}`;
-    preparedOrder.fb_sent = 0;
   }
 
   return preparedOrder;
