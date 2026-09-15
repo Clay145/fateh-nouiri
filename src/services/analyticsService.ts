@@ -562,8 +562,10 @@ export function trackPageViewVisitor(): void {
     saveFunnelStats(stats, true);
     const pvEventId = `pv_${session.id}_${Date.now()}`;
     postEventToServer('page_view', { eventId: pvEventId });
-    trackPageView({ eventID: pvEventId });
   }
+
+  // Meta Pixel PageView tracking (guards against double firing via window.__theoria_initial_pv_fired)
+  trackPageView();
 }
 
 /**

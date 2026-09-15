@@ -376,24 +376,53 @@ export function trackPurchase(params: {
 }
 
 /**
- * Standard PageView tracking helper with Deduplication eventID support
+ * Standard PageView tracking helper with Deduplication and test_event_code support
  */
-export function trackPageView(options?: { eventID?: string; test_event_code?: string }): void {
-  if (typeof window !== 'undefined' && typeof window.fbq === 'function') {
-    try {
-      if (options?.eventID) {
-        window.fbq('track', 'PageView', {}, { eventID: options.eventID });
-      } else {
-        window.fbq('track', 'PageView');
-      }
-      console.log(
-        '%c[Meta Pixel] %cTracked "PageView" (Standard Event)' + (options?.eventID ? ` [EventID: ${options.eventID}]` : ''),
-        'color: #1877f2; font-weight: bold',
-        'color: #059669; font-weight: bold'
-      );
-    } catch {
-      // ignore
+export function trackPageView(options?: { eventID?: string; test_event_code?: string; force?: boolean }): void {
+  if (typeof window === 'undefined' || typeof window.fbq !== 'function') return;
+
+  // Avoid firing duplicate PageView on the very initial page load if index.html already fired it
+  if ((window as any).__theoria_initial_pv_fired && !options?.force && !options?.eventID) {
+    (window as any).__theoria_initial_pv_fired = false;
+    return;
+  }
+
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const testCode =
+      options?.test_event_code ||
+      urlParams.get('test_event_code') ||
+      urlParams.get('testEventCode') ||
+      sessionStorage.getItem('meta_test_event_code') ||
+      undefined;
+
+    const opt: Record<string, string> = {};
+    if (options?.eventID) opt.eventID = options.eventID;
+    if (testCode) opt.test_event_code = testCode;
+
+    if (Object.keys(opt).length > 0) {
+      window.fbq('track', 'PageView', {}, opt);
+    } else {
+      window.fbq('track', 'PageView');
     }
+
+    logPixelEvent({
+      eventName: 'PageView',
+      eventId: options?.eventID,
+      parameters: opt,
+      status: 'fired',
+      timestamp: Date.now(),
+    });
+
+    console.log(
+      '%c[Meta Pixel] %cTracked "PageView" (Standard Event)' +
+        (options?.eventID ? ` [EventID: ${options.eventID}]` : '') +
+        (testCode ? ` [TestCode: ${testCode}]` : ''),
+      'color: #1877f2; font-weight: bold',
+      'color: #059669; font-weight: bold'
+    );
+  } catch {
+    // ignore
   }
 }
 
