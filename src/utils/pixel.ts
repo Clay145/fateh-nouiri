@@ -376,14 +376,18 @@ export function trackPurchase(params: {
 }
 
 /**
- * Standard PageView tracking helper
+ * Standard PageView tracking helper with Deduplication eventID support
  */
-export function trackPageView(): void {
+export function trackPageView(options?: { eventID?: string; test_event_code?: string }): void {
   if (typeof window !== 'undefined' && typeof window.fbq === 'function') {
     try {
-      window.fbq('track', 'PageView');
+      if (options?.eventID) {
+        window.fbq('track', 'PageView', {}, { eventID: options.eventID });
+      } else {
+        window.fbq('track', 'PageView');
+      }
       console.log(
-        '%c[Meta Pixel] %cTracked "PageView" (Standard Event)',
+        '%c[Meta Pixel] %cTracked "PageView" (Standard Event)' + (options?.eventID ? ` [EventID: ${options.eventID}]` : ''),
         'color: #1877f2; font-weight: bold',
         'color: #059669; font-weight: bold'
       );

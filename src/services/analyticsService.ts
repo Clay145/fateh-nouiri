@@ -1,4 +1,4 @@
-import { trackAddToCart, trackInitiateCheckout, trackPurchase, trackPageView } from '../utils/pixel';
+import { trackAddToCart, trackInitiateCheckout, trackPurchase, trackPageView, getFbpCookie, getFbcCookie } from '../utils/pixel';
 
 export type FunnelStep =
   | 'page_view'
@@ -240,7 +240,12 @@ async function syncMergedStatsToServer(stats: FunnelStats): Promise<void> {
  */
 function postEventToServer(
   event: FunnelStep,
-  extra?: { fieldName?: 'fullname' | 'phone' | 'wilaya' | 'address'; selectedPackage?: string; totalPrice?: number }
+  extra?: {
+    fieldName?: 'fullname' | 'phone' | 'wilaya' | 'address';
+    selectedPackage?: string;
+    totalPrice?: number;
+    eventId?: string;
+  }
 ) {
   if (typeof window === 'undefined') return;
   const session = getCurrentSession();
@@ -253,6 +258,9 @@ function postEventToServer(
     fieldName: extra?.fieldName,
     selectedPackage: extra?.selectedPackage,
     totalPrice: extra?.totalPrice,
+    eventId: extra?.eventId,
+    fbp: getFbpCookie() || undefined,
+    fbc: getFbcCookie() || undefined,
   };
 
   try {
@@ -552,8 +560,9 @@ export function trackPageViewVisitor(): void {
     }
 
     saveFunnelStats(stats, true);
-    postEventToServer('page_view');
-    trackPageView();
+    const pvEventId = `pv_${session.id}_${Date.now()}`;
+    postEventToServer('page_view', { eventId: pvEventId });
+    trackPageView({ eventID: pvEventId });
   }
 }
 

@@ -39,11 +39,11 @@ export interface CapiEventRecord {
   id: string;
   eventName: string;
   eventId: string;
-  orderCode: string;
-  totalPrice: number;
-  customerName: string;
-  phoneHashed: string;
-  wilaya: string;
+  orderCode?: string;
+  totalPrice?: number;
+  customerName?: string;
+  phoneHashed?: string;
+  wilaya?: string;
   fbp?: string;
   fbc?: string;
   status: 'deduplicated_matched' | 'sent_to_meta' | 'logged_test_mode' | 'duplicate_blocked';
@@ -287,6 +287,118 @@ async function processMetaCapiPurchase(
     eventId: canonicalEventId,
     status: finalStatus,
   };
+}
+
+// Server-side Deduplication Cache for PageView CAPI events
+const processedCapiPageViewIds = new Set<string>();
+
+/**
+ * Dispatch Meta Conversions API (CAPI) PageView standard event with identical event_id for deduplication
+ */
+async function sendMetaCapiPageView(clientContext: {
+  eventId: string;
+  fbp?: string;
+  fbc?: string;
+  userAgent?: string;
+  ip?: string;
+  referer?: string;
+}): Promise<{ success: boolean; eventId: string; status: CapiEventRecord['status'] }> {
+  const { eventId, fbp, fbc, userAgent, ip, referer } = clientContext;
+
+  // Deduplication guard: do not re-send identical eventId from server
+  if (processedCapiPageViewIds.has(eventId)) {
+    return { success: true, eventId, status: 'duplicate_blocked' };
+  }
+  processedCapiPageViewIds.add(eventId);
+
+  // Keep deduplication set bounded
+  if (processedCapiPageViewIds.size > 2000) {
+    const firstItems = Array.from(processedCapiPageViewIds).slice(0, 500);
+    firstItems.forEach((id) => processedCapiPageViewIds.delete(id));
+  }
+
+  const userData: Record<string, unknown> = {
+    country: [hashSha256('dz')],
+  };
+
+  if (fbp) userData.fbp = fbp;
+  if (fbc) userData.fbc = fbc;
+  if (ip) userData.client_ip_address = ip;
+  if (userAgent) userData.client_user_agent = userAgent;
+
+  const eventSourceUrl = referer || 'https://theoriastore.com/';
+
+  const payload: Record<string, unknown> = {
+    data: [
+      {
+        event_name: 'PageView',
+        event_time: Math.floor(Date.now() / 1000),
+        event_id: eventId,
+        event_source_url: eventSourceUrl,
+        action_source: 'website',
+        user_data: userData,
+      },
+    ],
+  };
+
+  const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
+  const matchScore = calculateMatchScore(userData);
+  const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSc66vT8XcZCPGZC32NNrZCwcy9uQLKemQJeYxAvZA6K1ZC3ryGZA04ZCXWEuSsPoWorcJ5LJ2pP93wvoTySSvNfYdKiUtOpgz5b0z6vMARB25TAMmnZAuZAAwKrDvSmVAQSn2b9NnyZAwx1AHpwFsIRdS7FRJKB96TfPIYIbe9tavkSlM63ZB5jQgZDZD';
+  const accessToken = (process.env.META_CONVERSIONS_API_ACCESS_TOKEN && !process.env.META_CONVERSIONS_API_ACCESS_TOKEN.startsWith('EAAhsQrqF1LQBSbaBejwOJlz'))
+    ? process.env.META_CONVERSIONS_API_ACCESS_TOKEN
+    : FALLBACK_CAPI_TOKEN;
+
+  let finalStatus: CapiEventRecord['status'] = 'logged_test_mode';
+  let responseText = 'Simulated payload prepared with Event Match Quality ' + matchScore + '/10';
+
+  if (accessToken) {
+    try {
+      console.log(
+        `[Meta CAPI v20.0] Sending Server PageView: event_id=${eventId}, pixel=${effectivePixelId}, fbp=${fbp || 'none'}`
+      );
+      const metaUrl = `https://graph.facebook.com/v20.0/${effectivePixelId}/events?access_token=${accessToken}`;
+      const response = await fetch(metaUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const resJson = await response.json();
+      console.log(`[Meta CAPI PageView Response] Status: ${response.status}`, JSON.stringify(resJson));
+
+      if (response.ok && resJson.events_received) {
+        finalStatus = 'sent_to_meta';
+        responseText = `Success: ${resJson.events_received} event(s) received by Meta CAPI. Browser & Server deduplication active.`;
+        console.log(`[Meta CAPI Success] Received ${resJson.events_received} PageView event(s). event_id: ${eventId}`);
+      } else {
+        responseText = `Meta Graph API Notice: ${JSON.stringify(resJson)}`;
+        console.error(`[Meta CAPI Error] Meta API Error for PageView:`, JSON.stringify(resJson.error || resJson));
+      }
+    } catch (err: any) {
+      console.error('[Meta CAPI PageView Request Failed]', err?.message || err);
+      responseText = `CAPI request network status: ${err?.message || 'Offline/Local'}`;
+    }
+  } else {
+    finalStatus = 'deduplicated_matched';
+    responseText = `Deduplication ready: event_id "${eventId}" formatted. Matches Browser Pixel.`;
+  }
+
+  const record: CapiEventRecord = {
+    id: `capi_pv_${Date.now()}`,
+    eventName: 'PageView',
+    eventId,
+    fbp,
+    fbc,
+    status: finalStatus,
+    responseDetails: responseText,
+    timestamp: Date.now(),
+    eventMatchScore: matchScore,
+  };
+
+  capiEventHistory.unshift(record);
+  if (capiEventHistory.length > 100) capiEventHistory.pop();
+
+  return { success: true, eventId, status: finalStatus };
 }
 
 const DATA_FILE = path.join(process.cwd(), 'orders_data.json');
@@ -934,9 +1046,30 @@ async function startServer() {
   // POST Track funnel event from any visitor device (mobile phone, desktop, etc.)
   app.post('/api/analytics/track', (req: Request, res: Response) => {
     loadAnalytics();
-    const { sessionId, event, device, source, fieldName, selectedPackage } = req.body || {};
+    const { sessionId, event, device, source, fieldName, selectedPackage, eventId, fbp, fbc } = req.body || {};
     if (!sessionId || !event) {
       return res.status(400).json({ success: false, error: 'sessionId and event are required' });
+    }
+
+    // Trigger server-side CAPI PageView if event is page_view
+    if (event === 'page_view' && eventId) {
+      const clientIp =
+        (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+        req.socket.remoteAddress ||
+        '';
+      const userAgent = (req.headers['user-agent'] as string) || '';
+      const referer = (req.headers['referer'] as string) || '';
+
+      sendMetaCapiPageView({
+        eventId: String(eventId),
+        fbp: fbp ? String(fbp) : undefined,
+        fbc: fbc ? String(fbc) : undefined,
+        userAgent,
+        ip: clientIp,
+        referer,
+      }).catch((err) => {
+        console.error('[CAPI PageView Error]', err);
+      });
     }
 
     const now = Date.now();
