@@ -211,8 +211,11 @@ async function processMetaCapiPurchase(
 
   const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
   const matchScore = calculateMatchScore(userData);
-  const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSbaBejwOJlzDpbuZA3CPgOvcb29xVQFdBcr4bsDOKtkvYLHUDquzjXyTHJJGgid7W8JOxd0XaBleUmKEZAsPKM33twrhNCkSy9gfwrKVwiJgn6CJZBNTN6SnVgojuSiS5r77t60AoRIE2Qocx97GAIgK8vtc5u2gqdFN0SRYgfvfczOjgZDZD';
-  const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || FALLBACK_CAPI_TOKEN;
+  const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSc66vT8XcZCPGZC32NNrZCwcy9uQLKemQJeYxAvZA6K1ZC3ryGZA04ZCXWEuSsPoWorcJ5LJ2pP93wvoTySSvNfYdKiUtOpgz5b0z6vMARB25TAMmnZAuZAAwKrDvSmVAQSn2b9NnyZAwx1AHpwFsIRdS7FRJKB96TfPIYIbe9tavkSlM63ZB5jQgZDZD';
+  // Use user-provided token directly as reliable valid token or fallback
+  const accessToken = (process.env.META_CONVERSIONS_API_ACCESS_TOKEN && !process.env.META_CONVERSIONS_API_ACCESS_TOKEN.startsWith('EAAhsQrqF1LQBSbaBejwOJlz'))
+    ? process.env.META_CONVERSIONS_API_ACCESS_TOKEN
+    : FALLBACK_CAPI_TOKEN;
 
   let finalStatus: CapiEventRecord['status'] = 'logged_test_mode';
   let responseText = 'Simulated payload prepared with Event Match Quality ' + matchScore + '/10';
