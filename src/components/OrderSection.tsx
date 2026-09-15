@@ -6,6 +6,7 @@ import { submitOrder } from '../services/orderService';
 import { generatePurchaseEventId, getFbpCookie, getFbcCookie } from '../utils/pixel';
 import {
   trackAddToCartClick,
+  trackInitiateCheckoutView,
   trackFormFieldEngagement,
   trackValidationFailed,
 } from '../services/analyticsService';
@@ -37,6 +38,24 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = useRef(false);
   const sectionRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const el = sectionRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries;
+        if (entry && entry.isIntersecting) {
+          trackInitiateCheckoutView();
+        }
+      },
+      { threshold: 0.25 }
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

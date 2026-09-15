@@ -1,6 +1,6 @@
 import React from 'react';
 import { ShoppingBag } from 'lucide-react';
-import { trackAddToCartClick, trackFormOpened } from '../services/analyticsService';
+import { trackAddToCartClick } from '../services/analyticsService';
 
 export const FloatingMobileBar: React.FC = () => {
   return (
@@ -21,7 +21,6 @@ export const FloatingMobileBar: React.FC = () => {
           href="#order-form"
           onClick={() => {
             trackAddToCartClick('الشريط السفلي العائم للهاتف - اطلب الآن');
-            trackFormOpened('نقر الشريط العائم');
           }}
           className="flex-1 py-2.5 sm:py-3 px-3 sm:px-4 rounded-full bg-[#7dd3fc] text-[#001f2e] text-center font-headline font-black text-xs sm:text-sm shadow-[0_0_20px_rgba(125,211,252,0.3)] hover:bg-[#c8eaff] transition-all flex items-center justify-center gap-1.5 whitespace-nowrap"
         >

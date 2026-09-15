@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ASSETS } from '../data/constants';
 import { ShoppingBag, Volume2, Package, Menu, X } from 'lucide-react';
-import { trackAddToCartClick, trackFormOpened } from '../services/analyticsService';
+import { trackAddToCartClick } from '../services/analyticsService';
 
 interface NavbarProps {
   onOpenSoundPreview: () => void;
@@ -103,7 +103,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             href="#order-form"
             onClick={() => {
               trackAddToCartClick('شريط التنقل العلوي - اطلب الآن');
-              trackFormOpened('نقر زر النافبار');
             }}
             className="bg-[#7dd3fc] text-[#001f2e] hover:bg-[#c8eaff] px-3 sm:px-5 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(125,211,252,0.3)] hover:shadow-[0_0_25px_rgba(125,211,252,0.5)] transition-all flex items-center gap-1.5 shrink-0"
           >

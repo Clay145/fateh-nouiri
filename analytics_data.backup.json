@@ -1,11 +1,11 @@
 {
-  "totalVisitors": 0,
-  "contentEngaged": 0,
+  "totalVisitors": 1,
+  "contentEngaged": 1,
   "clickedAddToCart": 0,
   "reachedCheckoutForm": 0,
   "startedFillingForm": 0,
   "validationFailed": 0,
-  "completedPurchases": 9,
+  "completedPurchases": 13,
   "fieldDropOffs": {
     "fullname": 0,
     "phone": 0,
@@ -14,9 +14,21 @@
   },
   "devices": {
     "mobile": 0,
-    "desktop": 0
+    "desktop": 1
   },
-  "sources": {},
-  "lastUpdated": 1789397366416,
-  "recentSessions": []
+  "sources": {
+    "زيارة مباشرة": 1
+  },
+  "lastUpdated": 1789477295294,
+  "recentSessions": [
+    {
+      "id": "sess_v_1789401033432_grd4i_1789476456628",
+      "startTime": 1789476457540,
+      "lastActiveTime": 1789476462214,
+      "source": "زيارة مباشرة",
+      "device": "كمبيوتر",
+      "furthestStep": "content_engaged",
+      "validationErrorsCount": 0
+    }
+  ]
 }

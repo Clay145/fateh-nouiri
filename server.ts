@@ -204,7 +204,9 @@ async function processMetaCapiPurchase(
     ],
   };
 
-  const testEventCode = clientContext.testEventCode || process.env.META_TEST_EVENT_CODE || process.env.TEST_EVENT_CODE || undefined;
+  // In production, real customer orders should never send a test_event_code to Meta
+  // unless explicitly requested in the query parameter ?test_event_code= or body (e.g. during manual testing)
+  const testEventCode = clientContext.testEventCode;
   if (testEventCode) {
     payload.test_event_code = String(testEventCode).trim();
   }
@@ -648,12 +650,11 @@ async function startServer() {
     const userAgent = req.headers['user-agent'] || '';
     const host = req.headers.host || 'theoriastore.com';
     const thankYouUrl = `https://${host}/thank-you?order_id=${encodeURIComponent(orderCode)}&token=${encodeURIComponent(fb_token)}`;
+    // Only forward test_event_code if explicitly provided in query, body or header (e.g. from test tool)
     const testEventCode = (req.query.test_event_code as string) || 
                           (body.test_event_code as string) || 
                           (req.headers['x-meta-test-event-code'] as string) || 
-                          process.env.META_TEST_EVENT_CODE || 
-                          process.env.TEST_EVENT_CODE ||
-                          'TEST45919';
+                          undefined;
 
     try {
       const capiResult = await processMetaCapiPurchase(newOrder, {
@@ -726,14 +727,15 @@ async function startServer() {
       });
     }
 
-    const testEventCode = order.test_event_code || (req.query.test_event_code as string) || process.env.META_TEST_EVENT_CODE || 'TEST45919';
+    // Only provide test_event_code if recorded on order or explicitly passed in request query
+    const testEventCode = order.test_event_code || (req.query.test_event_code as string) || undefined;
 
     return res.json({
       valid: true,
       order_id: order.orderCode,
       event_id: order.fb_event_id || `purchase_${order.orderCode}`,
       fb_sent: order.fb_sent ?? 0,
-      test_event_code: testEventCode,
+      test_event_code: testEventCode || null,
       value: order.totalPrice,
       currency: 'DZD',
       customerName: order.customerName,

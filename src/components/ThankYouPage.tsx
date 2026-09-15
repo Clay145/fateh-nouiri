@@ -10,7 +10,7 @@ import {
   Layers,
   Sparkles,
 } from 'lucide-react';
-import { getMetaConversionAmount, trackPurchase } from '../utils/pixel';
+import { getMetaConversionAmount, trackPurchase, trackPageView } from '../utils/pixel';
 
 interface VerificationResult {
   valid: boolean;
@@ -52,9 +52,7 @@ export const ThankYouPage: React.FC = () => {
     async function verifyAndFire() {
       try {
         // Fire standard PageView for Thank You page
-        if (typeof (window as any).fbq === 'function') {
-          (window as any).fbq('track', 'PageView');
-        }
+        trackPageView();
 
         let data: VerificationResult | null = null;
 
@@ -140,7 +138,7 @@ export const ThankYouPage: React.FC = () => {
             params.get('test_event_code') ||
             params.get('testEventCode') ||
             sessionStorage.getItem('meta_test_event_code') ||
-            'TEST45919';
+            undefined;
 
           // فحص الحماية من الإطلاق المزدوج في المتصفح (Browser Reload Guard)
           const sessionFired = sessionStorage.getItem('fired_' + ORDER_ID);
