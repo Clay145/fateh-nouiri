@@ -19,10 +19,12 @@ export const FloatingMobileBar: React.FC = () => {
         <a
           id="mobile-bottom-order-btn"
           href="#order-form"
-          onClick={() => {
+          onClick={(e) => {
+            e.preventDefault();
             trackAddToCartClick('الشريط السفلي العائم للهاتف - اطلب الآن');
+            document.getElementById('order-form')?.scrollIntoView({ behavior: 'smooth' });
           }}
-          className="flex-1 py-2.5 sm:py-3 px-3 sm:px-4 rounded-full bg-[#7dd3fc] text-[#001f2e] text-center font-headline font-black text-xs sm:text-sm shadow-[0_0_20px_rgba(125,211,252,0.3)] hover:bg-[#c8eaff] transition-all flex items-center justify-center gap-1.5 whitespace-nowrap"
+          className="flex-1 py-2.5 sm:py-3 px-3 sm:px-4 rounded-full bg-[#7dd3fc] text-[#001f2e] text-center font-headline font-black text-xs sm:text-sm shadow-[0_0_20px_rgba(125,211,252,0.3)] hover:bg-[#c8eaff] transition-all flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer"
         >
           <ShoppingBag className="w-4 h-4 shrink-0" />
           <span>اطلب الآن (الدفع عند الاستلام)</span>

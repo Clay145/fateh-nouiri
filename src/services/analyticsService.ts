@@ -562,10 +562,12 @@ export function trackPageViewVisitor(): void {
     saveFunnelStats(stats, true);
     const pvEventId = `pv_${session.id}_${Date.now()}`;
     postEventToServer('page_view', { eventId: pvEventId });
+    // Meta Pixel PageView tracking (guarded so it fires exactly once with the same deduplication eventID)
+    trackPageView({ eventID: pvEventId });
+  } else {
+    // If not new, trackPageView will be skipped by its internal global singleton guard
+    trackPageView();
   }
-
-  // Meta Pixel PageView tracking (guards against double firing via window.__theoria_initial_pv_fired)
-  trackPageView();
 }
 
 /**

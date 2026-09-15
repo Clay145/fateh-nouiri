@@ -375,49 +375,45 @@ export function trackPurchase(params: {
   return true;
 }
 
+// Module-level guard to prevent multiple PageView firings during app lifecycle
+let globalPageViewFired = false;
+
 /**
- * Standard PageView tracking helper with Deduplication and test_event_code support
+ * Standard PageView tracking helper with Deduplication support
  */
-export function trackPageView(options?: { eventID?: string; test_event_code?: string; force?: boolean }): void {
+export function trackPageView(options?: { eventID?: string; force?: boolean }): void {
   if (typeof window === 'undefined' || typeof window.fbq !== 'function') return;
 
-  // Avoid firing duplicate PageView on the very initial page load if index.html already fired it
-  if ((window as any).__theoria_initial_pv_fired && !options?.force && !options?.eventID) {
-    (window as any).__theoria_initial_pv_fired = false;
+  // Ensure disablePushState is set on window.fbq so SPA navigation does not trigger automatic trackCustom('PageView')
+  try {
+    (window.fbq as any).disablePushState = true;
+  } catch {
+    // ignore
+  }
+
+  // Prevent duplicate firing on the same page unless explicitly forced (e.g. navigation to Thank You page)
+  if (globalPageViewFired && !options?.force) {
     return;
   }
 
+  const eventID = options?.eventID || `pv_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  globalPageViewFired = true;
+
   try {
-    const urlParams = new URLSearchParams(window.location.search);
-    const testCode =
-      options?.test_event_code ||
-      urlParams.get('test_event_code') ||
-      urlParams.get('testEventCode') ||
-      sessionStorage.getItem('meta_test_event_code') ||
-      undefined;
-
-    const opt: Record<string, string> = {};
-    if (options?.eventID) opt.eventID = options.eventID;
-    if (testCode) opt.test_event_code = testCode;
-
-    if (Object.keys(opt).length > 0) {
-      window.fbq('track', 'PageView', {}, opt);
-    } else {
-      window.fbq('track', 'PageView');
-    }
+    // Always pass eventID as 4th argument so Meta treats it as an official standard event
+    // and OpenBridge3 never injects an ob3_plugin-set_ ID
+    window.fbq('track', 'PageView', {}, { eventID });
 
     logPixelEvent({
       eventName: 'PageView',
-      eventId: options?.eventID,
-      parameters: opt,
+      eventId: eventID,
+      parameters: {},
       status: 'fired',
       timestamp: Date.now(),
     });
 
     console.log(
-      '%c[Meta Pixel] %cTracked "PageView" (Standard Event)' +
-        (options?.eventID ? ` [EventID: ${options.eventID}]` : '') +
-        (testCode ? ` [TestCode: ${testCode}]` : ''),
+      `%c[Meta Pixel] %cTracked "PageView" (Standard Event) [EventID: ${eventID}]`,
       'color: #1877f2; font-weight: bold',
       'color: #059669; font-weight: bold'
     );

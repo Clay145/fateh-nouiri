@@ -51,8 +51,8 @@ export const ThankYouPage: React.FC = () => {
     // 2. التحقق من السيرفر وقاعدة البيانات: هل التوكن سليم؟ وهل fb_sent = 0؟
     async function verifyAndFire() {
       try {
-        // Fire standard PageView for Thank You page
-        trackPageView();
+        // Fire standard PageView for Thank You page with explicit eventID
+        trackPageView({ eventID: `pv_ty_${order_id}`, force: true });
 
         let data: VerificationResult | null = null;
 

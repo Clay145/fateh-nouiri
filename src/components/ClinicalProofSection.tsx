@@ -55,10 +55,12 @@ export const ClinicalProofSection: React.FC = () => {
             <div className="pt-2 flex flex-wrap items-center gap-3 sm:gap-4">
               <a
                 href="#order-form"
-                onClick={() => {
+                onClick={(e) => {
+                  e.preventDefault();
                   trackAddToCartClick('قسم الإثبات العلمي - زر جرّب الفرق');
+                  document.getElementById('order-form')?.scrollIntoView({ behavior: 'smooth' });
                 }}
-                className="text-[#7dd3fc] hover:text-[#c8eaff] font-bold text-xs sm:text-sm inline-flex items-center gap-1.5 sm:gap-2 group"
+                className="text-[#7dd3fc] hover:text-[#c8eaff] font-bold text-xs sm:text-sm inline-flex items-center gap-1.5 sm:gap-2 group cursor-pointer"
               >
                 <span>جرّب الفرق بنفسك اليوم دون مخاطرة</span>
                 <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />

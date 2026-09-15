@@ -49,8 +49,12 @@ export const OrdersHistoryModal: React.FC<OrdersHistoryModalProps> = ({ isOpen, 
             <p className="text-sm">لم تقم بتسجيل أي طلب بعد في هذه الجلسة.</p>
             <a
               href="#order-form"
-              onClick={onClose}
-              className="inline-block mt-2 text-xs font-bold text-[#7dd3fc] hover:underline"
+              onClick={(e) => {
+                e.preventDefault();
+                onClose();
+                document.getElementById('order-form')?.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="inline-block mt-2 text-xs font-bold text-[#7dd3fc] hover:underline cursor-pointer"
             >
               انتقل لطلب جهاز Theoria الآن
             </a>

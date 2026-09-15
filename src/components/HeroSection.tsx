@@ -75,10 +75,12 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             <a
               id="hero-order-cta"
               href="#order-form"
-              onClick={() => {
+              onClick={(e) => {
+                e.preventDefault();
                 trackAddToCartClick('زر الهيرو الرئيسي - اطلب الآن');
+                document.getElementById('order-form')?.scrollIntoView({ behavior: 'smooth' });
               }}
-              className="inline-flex items-center justify-center gap-2.5 sm:gap-3 px-6 sm:px-8 py-3.5 sm:py-4 rounded-full bg-[#7dd3fc] text-[#001f2e] font-headline font-black text-sm sm:text-base shadow-[0_0_35px_rgba(125,211,252,0.35)] hover:shadow-[0_0_45px_rgba(125,211,252,0.6)] hover:bg-[#c8eaff] transition-all duration-300 transform active:scale-95 text-center"
+              className="inline-flex items-center justify-center gap-2.5 sm:gap-3 px-6 sm:px-8 py-3.5 sm:py-4 rounded-full bg-[#7dd3fc] text-[#001f2e] font-headline font-black text-sm sm:text-base shadow-[0_0_35px_rgba(125,211,252,0.35)] hover:shadow-[0_0_45px_rgba(125,211,252,0.6)] hover:bg-[#c8eaff] transition-all duration-300 transform active:scale-95 text-center cursor-pointer"
             >
               <span>اطلب الآن والدفع عند الاستلام</span>
               <ArrowLeft className="w-4 sm:w-5 h-4 sm:h-5 text-[#001f2e]" />
@@ -87,7 +89,11 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             <a
               id="hero-proof-cta"
               href="#clinical-proof"
-              className="inline-flex items-center justify-center gap-2 px-5 sm:px-6 py-3.5 sm:py-4 rounded-full bg-[#1a2438]/80 text-[#e0e8f0] hover:bg-[#202c42] transition-all duration-200 text-xs sm:text-sm font-semibold border border-[#4a6070]/30 text-center"
+              onClick={(e) => {
+                e.preventDefault();
+                document.getElementById('clinical-proof')?.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="inline-flex items-center justify-center gap-2 px-5 sm:px-6 py-3.5 sm:py-4 rounded-full bg-[#1a2438]/80 text-[#e0e8f0] hover:bg-[#202c42] transition-all duration-200 text-xs sm:text-sm font-semibold border border-[#4a6070]/30 text-center cursor-pointer"
             >
               <BarChart3 className="text-[#7dd3fc] w-4 h-4" />
               <span>شاهد الإثبات العلمي</span>

@@ -41,25 +41,14 @@
       s.parentNode.insertBefore(t,s)}(window, document,'script',
       'https://connect.facebook.net/en_US/fbevents.js');
       
-      // Disable autoConfig to prevent accidental button/form event guessing
-      fbq('set', 'autoConfig', false, '28477410788542282');
-      fbq('init', '28477410788542282');
+      // 1. Disable automatic pushState/SPA interception which causes Meta to fire trackCustom('PageView') with ob3_plugin
+      fbq.disablePushState = true;
 
-      // Standard Meta Pixel PageView Event (Required by official Meta Pixel standard)
-      try {
-        var _params = new URLSearchParams(window.location.search);
-        var _testCode = _params.get('test_event_code') || _params.get('testEventCode') || sessionStorage.getItem('meta_test_event_code');
-        if (_testCode) {
-          sessionStorage.setItem('meta_test_event_code', _testCode);
-          fbq('track', 'PageView', {}, { test_event_code: _testCode });
-        } else {
-          fbq('track', 'PageView');
-        }
-        window.__theoria_initial_pv_fired = true;
-      } catch (e) {
-        fbq('track', 'PageView');
-        window.__theoria_initial_pv_fired = true;
-      }
+      // 2. Disable autoConfig to prevent accidental button/form event guessing
+      fbq('set', 'autoConfig', false, '28477410788542282');
+
+      // 3. Initialize Pixel (PageView is fired with a unique deterministic eventID in application lifecycle)
+      fbq('init', '28477410788542282');
     </script>
     <!-- End Meta Pixel Code -->
   </head>
