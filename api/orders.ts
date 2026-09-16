@@ -80,6 +80,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!global.__THEORIA_ORDERS__) global.__THEORIA_ORDERS__ = [];
 
+    // An orderCode is the durable idempotency key for the Meta Purchase event.
+    // Never create or dispatch a second order when the client retries the same request.
+    if (body.orderCode) {
+      const existingByCode = global.__THEORIA_ORDERS__.find((o) => o.orderCode === body.orderCode);
+      if (existingByCode) {
+        return res.status(200).json({
+          success: true,
+          isDuplicate: true,
+          order: existingByCode,
+          order_id: existingByCode.orderCode,
+          token: existingByCode.fb_token,
+          event_id: existingByCode.eventId || `purchase_${existingByCode.orderCode}`,
+          fb_sent: existingByCode.fb_sent || 0,
+          redirect_url: `/thank-you?order_id=${encodeURIComponent(existingByCode.orderCode)}&token=${encodeURIComponent(existingByCode.fb_token)}`,
+        });
+      }
+    }
+
     // Anti-Duplicate Shield: Check if this order or phone was submitted in the last 60 seconds
     const now = Date.now();
     const existingOrder = global.__THEORIA_ORDERS__.find(
@@ -106,12 +124,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const fb_token = body.fb_token || (Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2));
     const fb_sent = 0;
 
-    // Extract test_event_code only if explicitly provided in query, body, header, or environment (Production default: undefined)
+    // Production: never send test_event_code unless explicitly passed (no env fallback)
     const testEventCode = (req.query.test_event_code as string) ||
                           (body.test_event_code as string) ||
                           (req.headers['x-meta-test-event-code'] as string) ||
-                          process.env.META_TEST_EVENT_CODE ||
-                          process.env.TEST_EVENT_CODE ||
                           undefined;
 
     const newOrder = {
@@ -132,14 +148,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       fb_event_id: eventId,
       fb_token,
       fb_sent,
-      fbp: body.fbp,
-      fbc: body.fbc,
+      ...(body.fbp ? { fbp: String(body.fbp) } : {}),
+      ...(body.fbc ? { fbc: String(body.fbc) } : {}),
       capiStatus: testEventCode ? 'test_mode' : 'pending',
     };
 
     // Server-side Meta CAPI v20.0 dispatch
     const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
-    const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSbaBejwOJlzDpbuZA3CPgOvcb29xVQFdBcr4bsDOKtkvYLHUDquzjXyTHJJGgid7W8JOxd0XaBleUmKEZAsPKM33twrhNCkSy9gfwrKVwiJgn6CJZBNTN6SnVgojuSiS5r77t60AoRIE2Qocx97GAIgK8vtc5u2gqdFN0SRYgfvfczOjgZDZD';
+    const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSbZC1XT8cdCX81jJvmxac27deOQd4s77dZASnegTKykgb95lCjYdWRLc3mvS0zYVtTaUMwLNIHGg1YghynrkaBCergTHujh49rInS6dZCFUfHmXWS59vk2bq58DrbfixVFUA0tqSuZAmgxil6PvMYvhOymwxlrdEB2PIe8taE20wqneO8wZDZD';
     const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || FALLBACK_CAPI_TOKEN;
 
     if (!accessToken) {

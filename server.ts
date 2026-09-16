@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' });
+dotenv.config();
 import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -102,6 +105,81 @@ function calculateMatchScore(userData: Record<string, unknown>): number {
   if (userData.client_ip_address) score += 0.3;
   if (userData.client_user_agent) score += 0.3;
   return Math.min(10, Math.round(score * 10) / 10);
+}
+
+const processedCapiStandardEventIds = new Set<string>();
+const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSbZC1XT8cdCX81jJvmxac27deOQd4s77dZASnegTKykgb95lCjYdWRLc3mvS0zYVtTaUMwLNIHGg1YghynrkaBCergTHujh49rInS6dZCFUfHmXWS59vk2bq58DrbfixVFUA0tqSuZAmgxil6PvMYvhOymwxlrdEB2PIe8taE20wqneO8wZDZD';
+
+async function processMetaCapiStandardEvent(params: {
+  eventName: 'ViewContent' | 'AddToCart' | 'InitiateCheckout';
+  eventId: string;
+  value?: number;
+  currency?: string;
+  contentName?: string;
+  contentIds?: string[];
+  contentType?: string;
+  numItems?: number;
+  fbp?: string;
+  fbc?: string;
+  userAgent?: string;
+  ip?: string;
+  referer?: string;
+  testEventCode?: string;
+}): Promise<void> {
+  if (processedCapiStandardEventIds.has(params.eventId)) return;
+  processedCapiStandardEventIds.add(params.eventId);
+
+  const userData: Record<string, unknown> = { country: [hashSha256('dz')] };
+  if (params.fbp) userData.fbp = params.fbp;
+  if (params.fbc) userData.fbc = params.fbc;
+  if (params.ip) userData.client_ip_address = params.ip;
+  if (params.userAgent) userData.client_user_agent = params.userAgent;
+
+  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+  const rawValue = Number(params.value) || 9500;
+  const value = metaCurrency === 'DZD'
+    ? rawValue
+    : Number((rawValue / (metaCurrency === 'EUR' ? 145 : 135)).toFixed(2));
+  const currency = metaCurrency === 'DZD' || metaCurrency === 'EUR' ? metaCurrency : 'USD';
+
+  const payload: Record<string, unknown> = {
+    data: [{
+      event_name: params.eventName,
+      event_time: Math.floor(Date.now() / 1000),
+      event_id: params.eventId,
+      event_source_url: params.referer || 'https://theoriastore.com/',
+      action_source: 'website',
+      user_data: userData,
+      custom_data: {
+        value,
+        currency,
+        content_name: params.contentName || 'جهاز مساج واسترخاء العينين Theoria',
+        content_ids: params.contentIds || ['theoria_eye_massager_pro'],
+        content_type: params.contentType || 'product',
+        ...(params.numItems ? { num_items: params.numItems } : {}),
+      },
+    }],
+  };
+  if (params.testEventCode) payload.test_event_code = params.testEventCode;
+
+  const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
+  const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || FALLBACK_CAPI_TOKEN;
+  if (!accessToken) {
+    console.warn(`[Meta CAPI] Missing access token; skipped ${params.eventName} event_id=${params.eventId}`);
+    return;
+  }
+
+  try {
+    const response = await fetch(`https://graph.facebook.com/v20.0/${effectivePixelId}/events?access_token=${accessToken}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json();
+    console.log(`[Meta CAPI] ${params.eventName} event_id=${params.eventId} test_event_code=${params.testEventCode || 'none'} status=${response.status}`, JSON.stringify(result));
+  } catch (error: any) {
+    console.error(`[Meta CAPI] ${params.eventName} request failed:`, error?.message || error);
+  }
 }
 
 /**
@@ -213,7 +291,7 @@ async function processMetaCapiPurchase(
 
   const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
   const matchScore = calculateMatchScore(userData);
-  const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSc66vT8XcZCPGZC32NNrZCwcy9uQLKemQJeYxAvZA6K1ZC3ryGZA04ZCXWEuSsPoWorcJ5LJ2pP93wvoTySSvNfYdKiUtOpgz5b0z6vMARB25TAMmnZAuZAAwKrDvSmVAQSn2b9NnyZAwx1AHpwFsIRdS7FRJKB96TfPIYIbe9tavkSlM63ZB5jQgZDZD';
+  const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSbZC1XT8cdCX81jJvmxac27deOQd4s77dZASnegTKykgb95lCjYdWRLc3mvS0zYVtTaUMwLNIHGg1YghynrkaBCergTHujh49rInS6dZCFUfHmXWS59vk2bq58DrbfixVFUA0tqSuZAmgxil6PvMYvhOymwxlrdEB2PIe8taE20wqneO8wZDZD';
   // Use user-provided token directly as reliable valid token or fallback
   const accessToken = (process.env.META_CONVERSIONS_API_ACCESS_TOKEN && !process.env.META_CONVERSIONS_API_ACCESS_TOKEN.startsWith('EAAhsQrqF1LQBSbaBejwOJlz'))
     ? process.env.META_CONVERSIONS_API_ACCESS_TOKEN
@@ -287,118 +365,6 @@ async function processMetaCapiPurchase(
     eventId: canonicalEventId,
     status: finalStatus,
   };
-}
-
-// Server-side Deduplication Cache for PageView CAPI events
-const processedCapiPageViewIds = new Set<string>();
-
-/**
- * Dispatch Meta Conversions API (CAPI) PageView standard event with identical event_id for deduplication
- */
-async function sendMetaCapiPageView(clientContext: {
-  eventId: string;
-  fbp?: string;
-  fbc?: string;
-  userAgent?: string;
-  ip?: string;
-  referer?: string;
-}): Promise<{ success: boolean; eventId: string; status: CapiEventRecord['status'] }> {
-  const { eventId, fbp, fbc, userAgent, ip, referer } = clientContext;
-
-  // Deduplication guard: do not re-send identical eventId from server
-  if (processedCapiPageViewIds.has(eventId)) {
-    return { success: true, eventId, status: 'duplicate_blocked' };
-  }
-  processedCapiPageViewIds.add(eventId);
-
-  // Keep deduplication set bounded
-  if (processedCapiPageViewIds.size > 2000) {
-    const firstItems = Array.from(processedCapiPageViewIds).slice(0, 500);
-    firstItems.forEach((id) => processedCapiPageViewIds.delete(id));
-  }
-
-  const userData: Record<string, unknown> = {
-    country: [hashSha256('dz')],
-  };
-
-  if (fbp) userData.fbp = fbp;
-  if (fbc) userData.fbc = fbc;
-  if (ip) userData.client_ip_address = ip;
-  if (userAgent) userData.client_user_agent = userAgent;
-
-  const eventSourceUrl = referer || 'https://theoriastore.com/';
-
-  const payload: Record<string, unknown> = {
-    data: [
-      {
-        event_name: 'PageView',
-        event_time: Math.floor(Date.now() / 1000),
-        event_id: eventId,
-        event_source_url: eventSourceUrl,
-        action_source: 'website',
-        user_data: userData,
-      },
-    ],
-  };
-
-  const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
-  const matchScore = calculateMatchScore(userData);
-  const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSc66vT8XcZCPGZC32NNrZCwcy9uQLKemQJeYxAvZA6K1ZC3ryGZA04ZCXWEuSsPoWorcJ5LJ2pP93wvoTySSvNfYdKiUtOpgz5b0z6vMARB25TAMmnZAuZAAwKrDvSmVAQSn2b9NnyZAwx1AHpwFsIRdS7FRJKB96TfPIYIbe9tavkSlM63ZB5jQgZDZD';
-  const accessToken = (process.env.META_CONVERSIONS_API_ACCESS_TOKEN && !process.env.META_CONVERSIONS_API_ACCESS_TOKEN.startsWith('EAAhsQrqF1LQBSbaBejwOJlz'))
-    ? process.env.META_CONVERSIONS_API_ACCESS_TOKEN
-    : FALLBACK_CAPI_TOKEN;
-
-  let finalStatus: CapiEventRecord['status'] = 'logged_test_mode';
-  let responseText = 'Simulated payload prepared with Event Match Quality ' + matchScore + '/10';
-
-  if (accessToken) {
-    try {
-      console.log(
-        `[Meta CAPI v20.0] Sending Server PageView: event_id=${eventId}, pixel=${effectivePixelId}, fbp=${fbp || 'none'}`
-      );
-      const metaUrl = `https://graph.facebook.com/v20.0/${effectivePixelId}/events?access_token=${accessToken}`;
-      const response = await fetch(metaUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const resJson = await response.json();
-      console.log(`[Meta CAPI PageView Response] Status: ${response.status}`, JSON.stringify(resJson));
-
-      if (response.ok && resJson.events_received) {
-        finalStatus = 'sent_to_meta';
-        responseText = `Success: ${resJson.events_received} event(s) received by Meta CAPI. Browser & Server deduplication active.`;
-        console.log(`[Meta CAPI Success] Received ${resJson.events_received} PageView event(s). event_id: ${eventId}`);
-      } else {
-        responseText = `Meta Graph API Notice: ${JSON.stringify(resJson)}`;
-        console.error(`[Meta CAPI Error] Meta API Error for PageView:`, JSON.stringify(resJson.error || resJson));
-      }
-    } catch (err: any) {
-      console.error('[Meta CAPI PageView Request Failed]', err?.message || err);
-      responseText = `CAPI request network status: ${err?.message || 'Offline/Local'}`;
-    }
-  } else {
-    finalStatus = 'deduplicated_matched';
-    responseText = `Deduplication ready: event_id "${eventId}" formatted. Matches Browser Pixel.`;
-  }
-
-  const record: CapiEventRecord = {
-    id: `capi_pv_${Date.now()}`,
-    eventName: 'PageView',
-    eventId,
-    fbp,
-    fbc,
-    status: finalStatus,
-    responseDetails: responseText,
-    timestamp: Date.now(),
-    eventMatchScore: matchScore,
-  };
-
-  capiEventHistory.unshift(record);
-  if (capiEventHistory.length > 100) capiEventHistory.pop();
-
-  return { success: true, eventId, status: finalStatus };
 }
 
 const DATA_FILE = path.join(process.cwd(), 'orders_data.json');
@@ -680,6 +646,24 @@ async function startServer() {
     const cleanPhone = String(body.phone).replace(/\s+/g, '');
     const now = Date.now();
 
+    // orderCode is the durable idempotency key for the Meta Purchase event.
+    // A retry of the same order must never create or dispatch another Purchase.
+    if (body.orderCode) {
+      const existingByCode = orders.find((o) => o.orderCode === body.orderCode);
+      if (existingByCode) {
+        return res.status(200).json({
+          success: true,
+          isDuplicate: true,
+          order: existingByCode,
+          order_id: existingByCode.orderCode,
+          token: existingByCode.fb_token,
+          event_id: existingByCode.eventId || `purchase_${existingByCode.orderCode}`,
+          fb_sent: existingByCode.fb_sent || 0,
+          redirect_url: `/thank-you?order_id=${encodeURIComponent(existingByCode.orderCode)}&token=${encodeURIComponent(existingByCode.fb_token || '')}`,
+        });
+      }
+    }
+
     // Anti-Duplicate Shield: Check if this phone or orderCode was placed within the last 60 seconds
     const existingOrder = orders.find(
       (o) => (o.phone === cleanPhone || (body.orderCode && o.orderCode === body.orderCode)) &&
@@ -696,7 +680,7 @@ async function startServer() {
         token: existingOrder.fb_token,
         event_id: existingOrder.eventId || `purchase_${existingOrder.orderCode}`,
         fb_sent: existingOrder.fb_sent || 0,
-        redirect_url: `/thank-you?order_id=${encodeURIComponent(existingOrder.orderCode)}&token=${encodeURIComponent(existingOrder.fb_token)}`,
+        redirect_url: `/thank-you?order_id=${encodeURIComponent(`${existingOrder.orderCode || ''}`)}&token=${encodeURIComponent(`${existingOrder.fb_token || ''}`)}`,
       });
     }
 
@@ -1046,30 +1030,46 @@ async function startServer() {
   // POST Track funnel event from any visitor device (mobile phone, desktop, etc.)
   app.post('/api/analytics/track', (req: Request, res: Response) => {
     loadAnalytics();
-    const { sessionId, event, device, source, fieldName, selectedPackage, eventId, fbp, fbc } = req.body || {};
+    const {
+      sessionId,
+      event,
+      device,
+      source,
+      fieldName: rawFieldName,
+      selectedPackage,
+      eventId,
+      metaEventName,
+      value,
+      currency,
+      contentName,
+      contentIds,
+      contentType,
+      numItems,
+      testEventCode,
+      fbp,
+      fbc,
+    } = req.body || {};
     if (!sessionId || !event) {
       return res.status(400).json({ success: false, error: 'sessionId and event are required' });
     }
 
-    // Trigger server-side CAPI PageView if event is page_view
-    if (event === 'page_view' && eventId) {
-      const clientIp =
-        (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-        req.socket.remoteAddress ||
-        '';
-      const userAgent = (req.headers['user-agent'] as string) || '';
-      const referer = (req.headers['referer'] as string) || '';
-
-      sendMetaCapiPageView({
+    if (metaEventName && eventId) {
+      processMetaCapiStandardEvent({
+        eventName: metaEventName,
         eventId: String(eventId),
+        value: Number(value) || 9500,
+        currency: currency ? String(currency) : undefined,
+        contentName: contentName ? String(contentName) : undefined,
+        contentIds: Array.isArray(contentIds) ? contentIds.map(String) : undefined,
+        contentType: contentType ? String(contentType) : undefined,
+        numItems: Number(numItems) || undefined,
         fbp: fbp ? String(fbp) : undefined,
         fbc: fbc ? String(fbc) : undefined,
-        userAgent,
-        ip: clientIp,
-        referer,
-      }).catch((err) => {
-        console.error('[CAPI PageView Error]', err);
-      });
+        userAgent: (req.headers['user-agent'] as string) || undefined,
+        ip: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || undefined,
+        referer: (req.headers['referer'] as string) || undefined,
+        testEventCode: (req.query.test_event_code as string) || (testEventCode ? String(testEventCode) : undefined),
+      }).catch((error) => console.error('[Meta CAPI Standard Event Error]', error));
     }
 
     const now = Date.now();
@@ -1125,11 +1125,12 @@ async function startServer() {
       }
     }
 
+    const validFieldNames = ['fullname', 'phone', 'wilaya', 'address'] as const;
+    const fieldName = validFieldNames.find((name) => name === rawFieldName);
     if (fieldName) {
       session.lastActiveField = fieldName;
-      if (funnelStats.fieldDropOffs[fieldName] !== undefined) {
-        funnelStats.fieldDropOffs[fieldName] = (funnelStats.fieldDropOffs[fieldName] || 0) + 1;
-      }
+      const fieldDropOffs = funnelStats.fieldDropOffs as Record<typeof validFieldNames[number], number>;
+      fieldDropOffs[fieldName] = (fieldDropOffs[fieldName] || 0) + 1;
     }
 
     if (event === 'validation_failed') {
