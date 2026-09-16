@@ -12,6 +12,7 @@ export interface PackageOption {
 export interface OrderFormData {
   fullName: string;
   phone: string;
+  email?: string;
   wilaya: string;
   commune: string;
   notes?: string;
@@ -25,6 +26,7 @@ export interface PlacedOrder {
   orderCode: string;
   customerName: string;
   phone: string;
+  email?: string;
   wilaya: string;
   commune: string;
   packageTitle: string;

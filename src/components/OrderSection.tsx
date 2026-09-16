@@ -15,6 +15,7 @@ import {
   ShoppingBag,
   User,
   Phone,
+  Mail,
   MapPin,
   Home,
   ShieldCheck,
@@ -32,6 +33,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
   const [selectedPackage, setSelectedPackage] = useState<PackageOption>(STORE_PACKAGES[0]);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
   const [wilayaCode, setWilayaCode] = useState('');
   const [address, setAddress] = useState('');
   const [phoneError, setPhoneError] = useState('');
@@ -92,6 +94,14 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
       return;
     }
 
+    const cleanEmail = email.trim();
+    if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail)) {
+      const err = 'يرجى إدخال بريد إلكتروني صحيح أو ترك الحقل فارغاً';
+      setPhoneError(err);
+      trackValidationFailed('بريد إلكتروني غير صالح');
+      return;
+    }
+
     const cleanAddress = address.trim();
     if (cleanAddress.length < 2) {
       const err = 'يرجى تحديد البلدية أو الحي لضمان دقة التوصيل';
@@ -119,6 +129,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
       orderCode: generatedOrderCode,
       customerName: cleanName,
       phone: cleanPhone,
+      email: cleanEmail || undefined,
       wilaya: wilayaName,
       commune: cleanAddress,
       packageTitle: selectedPackage.name,
@@ -308,6 +319,28 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
               {phoneError && (
                 <p className="text-xs text-[#ff6b6b] mt-1">{phoneError}</p>
               )}
+            </div>
+
+            {/* Email (optional - improves ad matching) */}
+            <div className="space-y-1.5">
+              <label htmlFor="email" className="text-xs sm:text-sm font-bold text-white">
+                البريد الإلكتروني (اختياري)
+              </label>
+              <div className="relative">
+                <Mail className="absolute right-3.5 top-3.5 text-[#a0b4c4] w-5 h-5 pointer-events-none" />
+                <input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onFocus={() => trackFormFieldEngagement('phone')}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (phoneError) setPhoneError('');
+                  }}
+                  placeholder="example@mail.com"
+                  className="w-full pr-11 pl-4 py-3 sm:py-3.5 rounded-xl bg-[#0a0e1a]/85 border border-[#2a3a48] focus:border-[#7dd3fc] focus:ring-1 focus:ring-[#7dd3fc] text-white placeholder-[#a0b4c4]/50 text-sm outline-none transition-all dir-ltr text-right box-border"
+                />
+              </div>
             </div>
 
             {/* Wilaya Selection */}

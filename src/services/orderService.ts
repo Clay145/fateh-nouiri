@@ -301,6 +301,7 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
     orderCode,
     customerName: String(orderData.customerName || 'عميل').trim(),
     phone: String(orderData.phone || '').replace(/\s+/g, ''),
+    email: orderData.email ? String(orderData.email).trim().toLowerCase() : undefined,
     wilaya: orderData.wilaya || 'غير محدد',
     commune: String(orderData.commune || '').trim(),
     packageTitle: orderData.packageTitle || 'جهاز مساج Theoria',

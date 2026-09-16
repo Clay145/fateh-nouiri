@@ -12,6 +12,7 @@ interface OrderItem {
   orderCode: string;
   customerName: string;
   phone: string;
+  email?: string;
   wilaya: string;
   commune: string;
   packageTitle: string;
@@ -98,6 +99,8 @@ function splitName(fullName: string): { firstName: string; lastName: string } {
 function calculateMatchScore(userData: Record<string, unknown>): number {
   let score = 4.0;
   if (userData.ph) score += 2.0;
+  if (userData.em) score += 1.5;
+  if (userData.external_id) score += 1.0;
   if (userData.fn || userData.ln) score += 1.0;
   if (userData.st || userData.ct) score += 1.0;
   if (userData.fbp) score += 1.0;
@@ -232,8 +235,10 @@ async function processMetaCapiPurchase(
   const userData: Record<string, unknown> = {
     ph: [hashSha256(normalizedPhone)],
     country: [hashSha256('dz')],
+    external_id: [hashSha256(orderCode)],
   };
 
+  if (order.email) userData.em = [hashSha256(order.email)];
   if (firstName) userData.fn = [hashSha256(firstName)];
   if (lastName) userData.ln = [hashSha256(lastName)];
   if (order.commune) userData.ct = [hashSha256(order.commune)];
@@ -708,6 +713,7 @@ async function startServer() {
       orderCode,
       customerName: body.customerName,
       phone: body.phone,
+      email: body.email ? String(body.email).trim().toLowerCase() : undefined,
       wilaya: body.wilaya || 'غير محدد',
       commune: body.commune || '',
       packageTitle: body.packageTitle || 'جهاز مساج Theoria',

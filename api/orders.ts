@@ -135,6 +135,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       orderCode,
       customerName: String(body.customerName).trim(),
       phone: cleanPhone,
+      email: body.email ? String(body.email).trim().toLowerCase() : undefined,
       wilaya: body.wilaya || 'غير محدد',
       commune: String(body.commune || '').trim(),
       packageTitle: body.packageTitle || 'جهاز مساج Theoria',
@@ -167,7 +168,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const userData: Record<string, unknown> = {
           ph: [hashSha256(cleanPhone)],
           country: [hashSha256('dz')],
+          external_id: [hashSha256(orderCode)],
         };
+        if (body.email) userData.em = [hashSha256(String(body.email))];
         const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() || (req.headers['x-real-ip'] as string) || undefined;
         const clientUa = (req.headers['user-agent'] as string) || undefined;
         if (clientIp) userData.client_ip_address = clientIp;
