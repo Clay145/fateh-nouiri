@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+data/
+*.backup.json
+analytics_data.json
+orders_data.json

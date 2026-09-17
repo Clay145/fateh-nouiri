@@ -1,4 +1,5 @@
 // Vercel Serverless Function for Funnel Analytics
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -58,6 +59,7 @@ declare global {
 }
 
 const FILE_PATH = path.join(process.cwd(), 'analytics_data.json');
+const DATA_DIR_FILE_PATH = path.join(process.cwd(), 'data', 'analytics_data.json');
 const TMP_FILE_PATH = '/tmp/analytics_data.json';
 
 function getInitialStats(): FunnelStats {
@@ -79,7 +81,7 @@ function getInitialStats(): FunnelStats {
 
 function loadStatsFromDisk(): FunnelStats {
   try {
-    for (const f of [FILE_PATH, TMP_FILE_PATH]) {
+    for (const f of [DATA_DIR_FILE_PATH, FILE_PATH, TMP_FILE_PATH]) {
       if (fs.existsSync(f)) {
         const raw = fs.readFileSync(f, 'utf-8');
         const parsed = JSON.parse(raw);
@@ -113,6 +115,99 @@ const STEP_WEIGHT: Record<string, number> = {
   form_started: 5,
   validation_failed: 5,
   purchase: 6,
+};
+
+// --- Meta Conversions API (server events for standard funnel steps) ---
+// Mirrors server.ts processMetaCapiStandardEvent. Fire-and-forget: never blocks the response.
+// Serverless instances are stateless, so this is best-effort on top of Meta event_id dedup.
+type CapiStandardName = 'ViewContent' | 'AddToCart' | 'InitiateCheckout';
+
+declare global {
+  var __THEORIA_CAPI_SENT__: Set<string> | undefined;
+}
+
+function capiHash(val: string): string {
+  if (!val) return '';
+  return crypto.createHash('sha256').update(val.trim().toLowerCase()).digest('hex');
+}
+
+async function sendCapiStandardEvent(params: {
+  eventName: CapiStandardName;
+  eventId: string;
+  value?: number;
+  currency?: string;
+  contentName?: string;
+  fbp?: string;
+  fbc?: string;
+  userAgent?: string;
+  ip?: string;
+  referer?: string;
+  testEventCode?: string;
+}): Promise<void> {
+  if (!global.__THEORIA_CAPI_SENT__) global.__THEORIA_CAPI_SENT__ = new Set<string>();
+  const key = `${params.eventName}|${params.eventId}`;
+  if (global.__THEORIA_CAPI_SENT__.has(key)) return;
+  global.__THEORIA_CAPI_SENT__.add(key);
+  if (global.__THEORIA_CAPI_SENT__.size > 500) {
+    const first = global.__THEORIA_CAPI_SENT__.values().next().value;
+    if (first) global.__THEORIA_CAPI_SENT__.delete(first);
+  }
+
+  const accessToken =
+    process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
+  if (!accessToken) return; // silent skip when token is not configured
+  const pixelId = process.env.META_PIXEL_ID || '28477410788542282';
+
+  const userData: Record<string, unknown> = { country: [capiHash('dz')] };
+  if (params.fbp) userData.fbp = params.fbp;
+  if (params.fbc) userData.fbc = params.fbc;
+  if (params.ip) userData.client_ip_address = params.ip;
+  if (params.userAgent) userData.client_user_agent = params.userAgent;
+
+  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+  const rawValue = Number(params.value) || 9500;
+  const value =
+    metaCurrency === 'DZD' ? rawValue : Number((rawValue / (metaCurrency === 'EUR' ? 145 : 135)).toFixed(2));
+  const currency = metaCurrency === 'DZD' || metaCurrency === 'EUR' ? metaCurrency : 'USD';
+
+  const payload: Record<string, unknown> = {
+    data: [
+      {
+        event_name: params.eventName,
+        event_time: Math.floor(Date.now() / 1000),
+        event_id: params.eventId,
+        event_source_url: params.referer || 'https://theoriastore.com/',
+        action_source: 'website',
+        user_data: userData,
+        custom_data: {
+          value,
+          currency,
+          content_name: params.contentName || 'جهاز مساج واسترخاء العينين Theoria',
+          content_ids: ['theoria_eye_massager_pro'],
+          content_type: 'product',
+        },
+      },
+    ],
+  };
+  if (params.testEventCode) payload.test_event_code = params.testEventCode;
+
+  try {
+    const res = await fetch(`https://graph.facebook.com/v20.0/${pixelId}/events?access_token=${accessToken}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => null);
+    console.log(`[Meta CAPI] ${params.eventName} event_id=${params.eventId} status=${res.status}`, JSON.stringify(data));
+  } catch (err: any) {
+    console.error(`[Meta CAPI] ${params.eventName} request failed:`, err?.message || err);
+  }
+}
+
+const FUNNEL_TO_CAPI: Record<string, CapiStandardName> = {
+  content_engaged: 'ViewContent',
+  add_to_cart: 'AddToCart',
+  initiate_checkout: 'InitiateCheckout',
 };
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
@@ -201,6 +296,38 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!sessionId || !event) {
       return res.status(400).json({ success: false, error: 'sessionId and event are required' });
+    }
+
+    // Server Conversions API for standard funnel steps (same event_id as browser pixel).
+    // page_view never maps to CAPI. Purchase is handled by api/orders.ts.
+    const resolvedCapiName =
+      (body.metaEventName as CapiStandardName | undefined) || FUNNEL_TO_CAPI[event as string];
+    const capiEventId = body.eventId ? String(body.eventId) : undefined;
+    if (resolvedCapiName && capiEventId) {
+      const headerVal = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+      const queryTestCode = req.query?.test_event_code;
+      sendCapiStandardEvent({
+        eventName: resolvedCapiName,
+        eventId: capiEventId,
+        value: Number(body.value ?? body.totalPrice) || 9500,
+        currency: body.currency ? String(body.currency) : undefined,
+        contentName: body.contentName
+          ? String(body.contentName)
+          : body.selectedPackage
+            ? String(body.selectedPackage)
+            : undefined,
+        fbp: body.fbp ? String(body.fbp) : undefined,
+        fbc: body.fbc ? String(body.fbc) : undefined,
+        userAgent: headerVal(req.headers['user-agent']),
+        ip:
+          headerVal(req.headers['x-forwarded-for'])?.split(',')[0]?.trim() ||
+          headerVal(req.headers['x-real-ip']) ||
+          undefined,
+        referer: headerVal(req.headers['referer']),
+        testEventCode:
+          (Array.isArray(queryTestCode) ? queryTestCode[0] : queryTestCode) ||
+          (body.testEventCode ? String(body.testEventCode) : undefined),
+      }).catch((err) => console.error('[Meta CAPI Standard Event Error]', err));
     }
 
     const now = Date.now();

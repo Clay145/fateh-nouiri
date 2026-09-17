@@ -1,4 +1,4 @@
-import { trackAddToCart, trackInitiateCheckout, trackPurchase, trackPageView, getFbpCookie, getFbcCookie } from '../utils/pixel';
+import { trackAddToCart, trackInitiateCheckout, trackPurchase, trackPixelEvent, getFbpCookie, getFbcCookie } from '../utils/pixel';
 
 export type FunnelStep =
   | 'page_view'
@@ -236,8 +236,27 @@ async function syncMergedStatsToServer(stats: FunnelStats): Promise<void> {
 }
 
 /**
- * Send event to backend server so ANY visitor (phone, laptop, tablet) is saved centrally
+ * Send event to backend server so ANY visitor (phone, laptop, tablet) is saved centrally.
+ * Forwards the shared Meta eventID + event name so the server can fire the matching
+ * Conversions API event with the SAME event_id (browser/server deduplication).
  */
+function getMetaTestEventCode(): string | undefined {
+  try {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return (
+        params.get('test_event_code') ||
+        sessionStorage.getItem('meta_test_event_code') ||
+        'TEST45919' ||
+        undefined
+      );
+    }
+  } catch {
+    // ignore
+  }
+  return 'TEST45919';
+}
+
 function postEventToServer(
   event: FunnelStep,
   extra?: {
@@ -245,6 +264,10 @@ function postEventToServer(
     selectedPackage?: string;
     totalPrice?: number;
     eventId?: string;
+    metaEventName?: 'ViewContent' | 'AddToCart' | 'InitiateCheckout';
+    value?: number;
+    currency?: string;
+    contentName?: string;
   }
 ) {
   if (typeof window === 'undefined') return;
@@ -259,6 +282,11 @@ function postEventToServer(
     selectedPackage: extra?.selectedPackage,
     totalPrice: extra?.totalPrice,
     eventId: extra?.eventId,
+    metaEventName: extra?.metaEventName,
+    value: extra?.value ?? extra?.totalPrice,
+    currency: extra?.currency,
+    contentName: extra?.contentName ?? extra?.selectedPackage,
+    testEventCode: getMetaTestEventCode(),
     fbp: getFbpCookie() || undefined,
     fbc: getFbcCookie() || undefined,
   };
@@ -467,7 +495,15 @@ function saveCurrentSession(session: VisitorSession): void {
 function advanceStep(
   newStep: FunnelStep,
   fieldName?: 'fullname' | 'phone' | 'wilaya' | 'address',
-  extra?: { selectedPackage?: string; totalPrice?: number }
+  extra?: {
+    selectedPackage?: string;
+    totalPrice?: number;
+    eventId?: string;
+    metaEventName?: 'ViewContent' | 'AddToCart' | 'InitiateCheckout';
+    value?: number;
+    currency?: string;
+    contentName?: string;
+  }
 ) {
   // If in admin mode, do not pollute customer conversion funnel
   if (isAdminContext()) return;
@@ -516,11 +552,16 @@ function advanceStep(
 
   saveFunnelStats(stats, true);
 
-  // Sync to Backend Server immediately
+  // Sync to Backend Server immediately (shares the SAME eventId as the browser pixel)
   postEventToServer(newStep, {
     fieldName,
     selectedPackage: extra?.selectedPackage || session.selectedPackage,
     totalPrice: extra?.totalPrice,
+    eventId: extra?.eventId,
+    metaEventName: extra?.metaEventName,
+    value: extra?.value ?? extra?.totalPrice,
+    currency: extra?.currency,
+    contentName: extra?.contentName ?? extra?.selectedPackage,
   });
 }
 
@@ -529,7 +570,7 @@ function advanceStep(
 // -------------------------------------------------------------
 
 /**
- * 1. Initial Page View Tracking
+ * 1. Initial Page View Tracking (funnel only — Meta PageView browser + CAPI removed)
  */
 export function trackPageViewVisitor(): void {
   if (typeof window === 'undefined') return;
@@ -560,13 +601,7 @@ export function trackPageViewVisitor(): void {
     }
 
     saveFunnelStats(stats, true);
-    const pvEventId = `pv_${session.id}_${Date.now()}`;
-    postEventToServer('page_view', { eventId: pvEventId });
-    // Meta Pixel PageView tracking (guarded so it fires exactly once with the same deduplication eventID)
-    trackPageView({ eventID: pvEventId });
-  } else {
-    // If not new, trackPageView will be skipped by its internal global singleton guard
-    trackPageView();
+    postEventToServer('page_view');
   }
 }
 
@@ -577,7 +612,13 @@ export function trackContentEngagement(): void {
   if (typeof window === 'undefined' || isAdminContext()) return;
   if (!sessionStorage.getItem('theoria_tracked_eng')) {
     sessionStorage.setItem('theoria_tracked_eng', 'true');
-    advanceStep('content_engaged');
+    const vcEventId = `vc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    trackPixelEvent('ViewContent', {
+      content_name: 'جهاز مساج واسترخاء العينين Theoria',
+      content_type: 'product',
+      content_ids: ['theoria_eye_massager_pro'],
+    }, { eventID: vcEventId });
+    advanceStep('content_engaged', undefined, { eventId: vcEventId, metaEventName: 'ViewContent' });
   }
 }
 
@@ -586,12 +627,21 @@ export function trackContentEngagement(): void {
  */
 export function trackAddToCartClick(packageName?: string): void {
   if (typeof window === 'undefined' || isAdminContext()) return;
+  const atcEventId = `atc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   trackAddToCart({
     content_name: packageName || 'جهاز مساج Theoria Pro',
     value: 9500,
     currency: 'DZD',
+    event_id: atcEventId,
   });
-  advanceStep('add_to_cart', undefined, { selectedPackage: packageName });
+  advanceStep('add_to_cart', undefined, {
+    selectedPackage: packageName,
+    eventId: atcEventId,
+    metaEventName: 'AddToCart',
+    value: 9500,
+    currency: 'DZD',
+    contentName: packageName || 'جهاز مساج Theoria Pro',
+  });
 }
 
 /**
@@ -601,12 +651,20 @@ export function trackInitiateCheckoutView(): void {
   if (typeof window === 'undefined' || isAdminContext()) return;
   if (!sessionStorage.getItem('theoria_tracked_checkout')) {
     sessionStorage.setItem('theoria_tracked_checkout', 'true');
+    const icEventId = `ic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     trackInitiateCheckout({
       content_name: 'جهاز مساج Theoria Pro',
       value: 9500,
       currency: 'DZD',
+      event_id: icEventId,
     });
-    advanceStep('initiate_checkout');
+    advanceStep('initiate_checkout', undefined, {
+      eventId: icEventId,
+      metaEventName: 'InitiateCheckout',
+      value: 9500,
+      currency: 'DZD',
+      contentName: 'جهاز مساج Theoria Pro',
+    });
   }
 }
 

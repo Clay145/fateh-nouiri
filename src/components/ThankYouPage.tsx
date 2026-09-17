@@ -10,7 +10,7 @@ import {
   Layers,
   Sparkles,
 } from 'lucide-react';
-import { getMetaConversionAmount, trackPurchase, trackPageView } from '../utils/pixel';
+import { getMetaConversionAmount, trackPurchase } from '../utils/pixel';
 
 interface VerificationResult {
   valid: boolean;
@@ -51,9 +51,6 @@ export const ThankYouPage: React.FC = () => {
     // 2. التحقق من السيرفر وقاعدة البيانات: هل التوكن سليم؟ وهل fb_sent = 0؟
     async function verifyAndFire() {
       try {
-        // Fire standard PageView for Thank You page with explicit eventID
-        trackPageView({ eventID: `pv_ty_${order_id}`, force: true });
-
         let data: VerificationResult | null = null;
 
         // محاولة الاتصال بالخادم أولاً

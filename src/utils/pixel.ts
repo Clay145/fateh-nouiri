@@ -140,6 +140,11 @@ export function getPixelEventLogs(): Array<{
 /**
  * Low-level call to window.fbq with safety checks and optional eventID for Deduplication
  */
+
+// Page-lifetime registry: the same eventName + eventID pair is handed to fbq exactly once.
+// Kills same-ID doubles from stub-queue replays, StrictMode double-effects, or retry paths.
+const firedBrowserEventKeys = new Set<string>();
+
 export function trackPixelEvent(
   eventName: string,
   parameters?: Record<string, unknown>,
@@ -166,6 +171,24 @@ export function trackPixelEvent(
 
   if (typeof window.fbq === 'function') {
     try {
+      if (eventId) {
+        const dedupKey = `${eventName}|${eventId}`;
+        if (firedBrowserEventKeys.has(dedupKey)) {
+          console.warn(
+            `[Meta Pixel Deduplication Guard] "${eventName}" with eventID ${eventId} already handed to fbq on this page. Suppressed duplicate transport.`
+          );
+          logPixelEvent({
+            eventName,
+            eventId,
+            parameters: parameters || {},
+            status: 'dedup_blocked',
+            timestamp: Date.now(),
+          });
+          return;
+        }
+        firedBrowserEventKeys.add(dedupKey);
+      }
+
       const mergedOptions: Record<string, unknown> = {};
       if (eventId) mergedOptions.eventID = eventId;
       if (testEventCode) mergedOptions.test_event_code = testEventCode;
@@ -229,13 +252,14 @@ export function getMetaConversionAmount(dzdAmount: number = 9500): { value: numb
 
 /**
  * AddToCart event (when visitor clicks "اطلب الآن")
+ * Returns the eventID used so the caller can share it with the server (CAPI deduplication).
  */
 export function trackAddToCart(params?: {
   content_name?: string;
   value?: number;
   currency?: string;
   event_id?: string;
-}): void {
+}): string {
   const eventId = params?.event_id || `atc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const rawValue = params?.value || 9500;
   const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(rawValue);
@@ -252,10 +276,12 @@ export function trackAddToCart(params?: {
   };
 
   trackPixelEvent('AddToCart', defaultParams, { eventID: eventId });
+  return eventId;
 }
 
 /**
  * InitiateCheckout event (when visitor views the order form)
+ * Returns the eventID used so the caller can share it with the server (CAPI deduplication).
  */
 export function trackInitiateCheckout(params?: {
   content_name?: string;
@@ -263,7 +289,7 @@ export function trackInitiateCheckout(params?: {
   currency?: string;
   num_items?: number;
   event_id?: string;
-}): void {
+}): string {
   const eventId = params?.event_id || `ic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const rawValue = params?.value || 9500;
   const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(rawValue);
@@ -280,6 +306,7 @@ export function trackInitiateCheckout(params?: {
   };
 
   trackPixelEvent('InitiateCheckout', defaultParams, { eventID: eventId });
+  return eventId;
 }
 
 /**
@@ -375,60 +402,18 @@ export function trackPurchase(params: {
   return true;
 }
 
-// Module-level guard to prevent multiple PageView firings during app lifecycle
-let globalPageViewFired = false;
-
 /**
- * Standard PageView tracking helper with Deduplication support
+ * Standard PageView tracking is disabled — PageView (browser + CAPI) was removed.
+ * Funnel entry is tracked via ViewContent instead.
  */
-export function trackPageView(options?: { eventID?: string; force?: boolean }): void {
-  if (typeof window === 'undefined' || typeof window.fbq !== 'function') return;
-
-  // Ensure disablePushState is set on window.fbq so SPA navigation does not trigger automatic trackCustom('PageView')
-  try {
-    (window.fbq as any).disablePushState = true;
-  } catch {
-    // ignore
-  }
-
-  // Prevent duplicate firing on the same page unless explicitly forced (e.g. navigation to Thank You page)
-  if (globalPageViewFired && !options?.force) {
-    return;
-  }
-
-  const eventID = options?.eventID || `pv_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-  globalPageViewFired = true;
-
-  try {
-    // Always pass eventID as 4th argument so Meta treats it as an official standard event
-    // and OpenBridge3 never injects an ob3_plugin-set_ ID
-    window.fbq('track', 'PageView', {}, { eventID });
-
-    logPixelEvent({
-      eventName: 'PageView',
-      eventId: eventID,
-      parameters: {},
-      status: 'fired',
-      timestamp: Date.now(),
-    });
-
-    console.log(
-      `%c[Meta Pixel] %cTracked "PageView" (Standard Event) [EventID: ${eventID}]`,
-      'color: #1877f2; font-weight: bold',
-      'color: #059669; font-weight: bold'
-    );
-  } catch {
-    // ignore
-  }
-}
 
 /**
- * Custom tracking helper - strictly routes standard events like PageView to fbq('track', ...)
+ * Custom tracking helper - strictly routes standard events to fbq('track', ...)
  */
 export function trackPixelCustom(eventName: string, parameters?: Record<string, unknown>): void {
   if (typeof window !== 'undefined' && typeof window.fbq === 'function') {
     try {
-      const standardEvents = ['PageView', 'Purchase', 'AddToCart', 'InitiateCheckout', 'ViewContent', 'Lead', 'Contact'];
+      const standardEvents = ['Purchase', 'AddToCart', 'InitiateCheckout', 'ViewContent', 'Lead', 'Contact'];
       if (standardEvents.includes(eventName)) {
         window.fbq('track', eventName, parameters);
       } else {

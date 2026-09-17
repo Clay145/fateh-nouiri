@@ -372,9 +372,40 @@ async function processMetaCapiPurchase(
   };
 }
 
-const DATA_FILE = path.join(process.cwd(), 'orders_data.json');
-const ANALYTICS_FILE = path.join(process.cwd(), 'analytics_data.json');
-const ANALYTICS_BACKUP_FILE = path.join(process.cwd(), 'analytics_data.backup.json');
+const DATA_DIR = path.join(process.cwd(), 'data');
+const DATA_FILE = path.join(DATA_DIR, 'orders_data.json');
+const ANALYTICS_FILE = path.join(DATA_DIR, 'analytics_data.json');
+const ANALYTICS_BACKUP_FILE = path.join(DATA_DIR, 'analytics_data.backup.json');
+
+// Legacy locations (project root) — kept for one-time migration so existing local data is not lost.
+// Vite watches the project root, so writing JSON there triggers a full page reload loop in `npm run dev`.
+const LEGACY_DATA_FILE = path.join(process.cwd(), 'orders_data.json');
+const LEGACY_ANALYTICS_FILE = path.join(process.cwd(), 'analytics_data.json');
+const LEGACY_ANALYTICS_BACKUP_FILE = path.join(process.cwd(), 'analytics_data.backup.json');
+
+function ensureDataDir(): void {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  } catch {
+    // ignore
+  }
+}
+
+function migrateLegacyFile(legacyPath: string, newPath: string): void {
+  try {
+    if (!fs.existsSync(newPath) && fs.existsSync(legacyPath)) {
+      ensureDataDir();
+      fs.copyFileSync(legacyPath, newPath);
+    }
+  } catch {
+    // ignore migration errors — load functions fall back to legacy paths below
+  }
+}
+
+ensureDataDir();
+migrateLegacyFile(LEGACY_DATA_FILE, DATA_FILE);
+migrateLegacyFile(LEGACY_ANALYTICS_FILE, ANALYTICS_FILE);
+migrateLegacyFile(LEGACY_ANALYTICS_BACKUP_FILE, ANALYTICS_BACKUP_FILE);
 
 // Real customer orders only (no fake demo orders)
 const INITIAL_ORDERS: OrderItem[] = [];
@@ -443,6 +474,10 @@ function loadAnalytics(): void {
       rawContent = fs.readFileSync(ANALYTICS_FILE, 'utf-8');
     } else if (fs.existsSync(ANALYTICS_BACKUP_FILE)) {
       rawContent = fs.readFileSync(ANALYTICS_BACKUP_FILE, 'utf-8');
+    } else if (fs.existsSync(LEGACY_ANALYTICS_FILE)) {
+      rawContent = fs.readFileSync(LEGACY_ANALYTICS_FILE, 'utf-8');
+    } else if (fs.existsSync(LEGACY_ANALYTICS_BACKUP_FILE)) {
+      rawContent = fs.readFileSync(LEGACY_ANALYTICS_BACKUP_FILE, 'utf-8');
     }
 
     if (rawContent) {
@@ -483,6 +518,7 @@ function loadAnalytics(): void {
 
 function persistAnalytics(): void {
   try {
+    ensureDataDir();
     const dataStr = JSON.stringify(funnelStats, null, 2);
     fs.writeFileSync(ANALYTICS_FILE, dataStr, 'utf-8');
     fs.writeFileSync(ANALYTICS_BACKUP_FILE, dataStr, 'utf-8');
@@ -499,8 +535,13 @@ function loadOrders(): void {
     if (fs.existsSync(DATA_FILE)) {
       const content = fs.readFileSync(DATA_FILE, 'utf-8');
       orders = JSON.parse(content);
+    } else if (fs.existsSync(LEGACY_DATA_FILE)) {
+      const content = fs.readFileSync(LEGACY_DATA_FILE, 'utf-8');
+      orders = JSON.parse(content);
+      persistOrders();
     } else {
       orders = [...INITIAL_ORDERS];
+      ensureDataDir();
       fs.writeFileSync(DATA_FILE, JSON.stringify(orders, null, 2), 'utf-8');
     }
   } catch (err) {
@@ -511,6 +552,7 @@ function loadOrders(): void {
 
 function persistOrders(): void {
   try {
+    ensureDataDir();
     fs.writeFileSync(DATA_FILE, JSON.stringify(orders, null, 2), 'utf-8');
   } catch (err) {
     console.error('Error saving orders file:', err);
@@ -1059,9 +1101,21 @@ async function startServer() {
       return res.status(400).json({ success: false, error: 'sessionId and event are required' });
     }
 
-    if (metaEventName && eventId) {
+    // Fallback: older clients send only the funnel `event` + `eventId` without `metaEventName`.
+    // Map it so the server CAPI still fires with the SAME event_id as the browser pixel.
+    // Note: page_view never maps to CAPI — PageView tracking was removed entirely.
+    const FUNNEL_TO_CAPI: Record<string, 'ViewContent' | 'AddToCart' | 'InitiateCheckout'> = {
+      content_engaged: 'ViewContent',
+      add_to_cart: 'AddToCart',
+      initiate_checkout: 'InitiateCheckout',
+    };
+    const resolvedMetaEventName =
+      (metaEventName as 'ViewContent' | 'AddToCart' | 'InitiateCheckout' | undefined) ||
+      FUNNEL_TO_CAPI[event];
+
+    if (resolvedMetaEventName && eventId) {
       processMetaCapiStandardEvent({
-        eventName: metaEventName,
+        eventName: resolvedMetaEventName,
         eventId: String(eventId),
         value: Number(value) || 9500,
         currency: currency ? String(currency) : undefined,
@@ -1227,7 +1281,12 @@ async function startServer() {
   // Vite middleware for development vs static in production
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        watch: {
+          ignored: ['**/data/**', '**/analytics_data*.json', '**/orders_data.json'],
+        },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
