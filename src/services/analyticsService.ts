@@ -356,6 +356,9 @@ export async function clearAnalytics(): Promise<void> {
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem(SESSION_KEY);
       sessionStorage.removeItem('theoria_tracked_pv');
+      sessionStorage.removeItem('theoria_tracked_eng');
+      sessionStorage.removeItem('theoria_tracked_checkout');
+      sessionStorage.removeItem('theoria_fired_atc');
       localStorage.removeItem(BACKUP_STORAGE_KEY);
       const token = localStorage.getItem('theoria_admin_token') || 'theoria2026';
       await fetch('/api/analytics/clear', {
@@ -627,21 +630,28 @@ export function trackContentEngagement(): void {
  */
 export function trackAddToCartClick(packageName?: string): void {
   if (typeof window === 'undefined' || isAdminContext()) return;
-  const atcEventId = `atc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  trackAddToCart({
-    content_name: packageName || 'جهاز مساج Theoria Pro',
-    value: 9500,
-    currency: 'DZD',
-    event_id: atcEventId,
-  });
-  advanceStep('add_to_cart', undefined, {
-    selectedPackage: packageName,
-    eventId: atcEventId,
-    metaEventName: 'AddToCart',
-    value: 9500,
-    currency: 'DZD',
-    contentName: packageName || 'جهاز مساج Theoria Pro',
-  });
+  // Once per session: repeat CTA / package clicks only update the funnel,
+  // they must not fire new browser pixel or CAPI events.
+  if (!sessionStorage.getItem('theoria_fired_atc')) {
+    const atcEventId = `atc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    sessionStorage.setItem('theoria_fired_atc', atcEventId);
+    trackAddToCart({
+      content_name: packageName || 'جهاز مساج Theoria Pro',
+      value: 9500,
+      currency: 'DZD',
+      event_id: atcEventId,
+    });
+    advanceStep('add_to_cart', undefined, {
+      selectedPackage: packageName,
+      eventId: atcEventId,
+      metaEventName: 'AddToCart',
+      value: 9500,
+      currency: 'DZD',
+      contentName: packageName || 'جهاز مساج Theoria Pro',
+    });
+    return;
+  }
+  advanceStep('add_to_cart', undefined, { selectedPackage: packageName });
 }
 
 /**
