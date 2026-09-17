@@ -10,7 +10,7 @@ import {
   Layers,
   Sparkles,
 } from 'lucide-react';
-import { getMetaConversionAmount, trackPurchase } from '../utils/pixel';
+import { getMetaConversionAmount, trackPurchase, setAdvancedMatching } from '../utils/pixel';
 
 interface VerificationResult {
   valid: boolean;
@@ -159,6 +159,24 @@ export const ThankYouPage: React.FC = () => {
               test_event_code: effectiveTestEventCode,
             }
           );
+
+          // Advanced Matching from the locally stored order (covers direct
+          // thank-you landings where the submit-time call never ran in this browser)
+          try {
+            const storedRaw = localStorage.getItem(`theoria_order_${ORDER_ID}`);
+            if (storedRaw) {
+              const stored = JSON.parse(storedRaw);
+              const storedName = String(stored.customerName || data.customerName || '').split(/\s+/);
+              setAdvancedMatching({
+                email: stored.email || undefined,
+                phone: stored.phone || undefined,
+                firstName: storedName[0],
+                lastName: storedName.slice(1).join(' ') || undefined,
+              });
+            }
+          } catch {
+            // ignore
+          }
 
           const fired = trackPurchase({
             order_id: ORDER_ID,

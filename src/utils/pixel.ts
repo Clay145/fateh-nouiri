@@ -56,6 +56,39 @@ export function getFbcCookie(): string | null {
 }
 
 /**
+ * Advanced Matching: attach hashed customer keys to all subsequent browser events.
+ * fbq hashes plain values automatically — pass raw email/phone/name. Only non-empty
+ * fields are sent. Call once the customer has typed their details (order submit)
+ * so ViewContent/AddToCart/InitiateCheckout/Purchase all match better server-side.
+ */
+export function setAdvancedMatching(params: {
+  email?: string;
+  phone?: string;
+  firstName?: string;
+  lastName?: string;
+}): void {
+  if (typeof window === 'undefined' || typeof window.fbq !== 'function') return;
+  try {
+    const adv: Record<string, string> = {};
+    const email = (params.email || '').trim().toLowerCase();
+    if (email && email.includes('@')) adv.em = email;
+    const digits = (params.phone || '').replace(/[^0-9]/g, '');
+    if (digits) {
+      adv.ph = digits.startsWith('0') ? `213${digits.substring(1)}` : digits;
+    }
+    const fn = (params.firstName || '').trim().toLowerCase();
+    if (fn) adv.fn = fn;
+    const ln = (params.lastName || '').trim().toLowerCase();
+    if (ln) adv.ln = ln;
+    if (Object.keys(adv).length === 0) return;
+    window.fbq('init', META_MAIN_PIXEL_ID, adv);
+    console.log('%c[Meta Pixel] Advanced matching keys attached (em/ph/fn/ln present as available)', 'color: #1877f2;');
+  } catch {
+    // ignore
+  }
+}
+
+/**
  * Generates a deterministic, shared Event ID for Meta Pixel & CAPI Deduplication
  * Example output: 'purchase_TH-84920'
  */

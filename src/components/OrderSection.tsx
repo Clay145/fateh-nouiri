@@ -3,7 +3,7 @@ import { STORE_PACKAGES } from '../data/packages';
 import { ALGERIA_WILAYAS } from '../data/wilayas';
 import { PackageOption, PlacedOrder } from '../types';
 import { submitOrder } from '../services/orderService';
-import { generatePurchaseEventId, getFbpCookie, getFbcCookie } from '../utils/pixel';
+import { generatePurchaseEventId, getFbpCookie, getFbcCookie, setAdvancedMatching } from '../utils/pixel';
 import {
   trackAddToCartClick,
   trackInitiateCheckoutView,
@@ -118,6 +118,16 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
     // Lock submission synchronously
     isSubmittingRef.current = true;
     setIsSubmitting(true);
+
+    // Advanced Matching: attach customer keys so the thank-you Purchase
+    // (browser + CAPI) matches at the highest quality
+    const nameParts = cleanName.split(/\s+/);
+    setAdvancedMatching({
+      email: cleanEmail || undefined,
+      phone: cleanPhone,
+      firstName: nameParts[0],
+      lastName: nameParts.slice(1).join(' ') || undefined,
+    });
 
     const generatedOrderCode = `TH-${Math.floor(10000 + Math.random() * 90000)}`;
     const eventId = generatePurchaseEventId(generatedOrderCode);
