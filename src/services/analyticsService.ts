@@ -1,4 +1,4 @@
-import { getFbpCookie, getFbcCookie } from '../utils/pixel';
+import { trackAddToCart, trackInitiateCheckout, trackPurchase, trackPixelEvent, getFbpCookie, getFbcCookie } from '../utils/pixel';
 
 export type FunnelStep =
   | 'page_view'
@@ -616,8 +616,11 @@ export function trackContentEngagement(): void {
   if (!sessionStorage.getItem('theoria_tracked_eng')) {
     sessionStorage.setItem('theoria_tracked_eng', 'true');
     const vcEventId = `vc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    // Server-only intake: no browser ViewContent fire. The eventId travels to
-    // the server, which fires the single CAPI event with this same ID.
+    trackPixelEvent('ViewContent', {
+      content_name: 'جهاز مساج واسترخاء العينين Theoria',
+      content_type: 'product',
+      content_ids: ['theoria_eye_massager_pro'],
+    }, { eventID: vcEventId });
     advanceStep('content_engaged', undefined, { eventId: vcEventId, metaEventName: 'ViewContent' });
   }
 }
@@ -632,8 +635,12 @@ export function trackAddToCartClick(packageName?: string): void {
   if (!sessionStorage.getItem('theoria_fired_atc')) {
     const atcEventId = `atc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     sessionStorage.setItem('theoria_fired_atc', atcEventId);
-    // Server-only intake: no browser AddToCart fire. The eventId travels to
-    // the server, which fires the single CAPI event with this same ID.
+    trackAddToCart({
+      content_name: packageName || 'جهاز مساج Theoria Pro',
+      value: 9500,
+      currency: 'DZD',
+      event_id: atcEventId,
+    });
     advanceStep('add_to_cart', undefined, {
       selectedPackage: packageName,
       eventId: atcEventId,
@@ -655,8 +662,12 @@ export function trackInitiateCheckoutView(): void {
   if (!sessionStorage.getItem('theoria_tracked_checkout')) {
     sessionStorage.setItem('theoria_tracked_checkout', 'true');
     const icEventId = `ic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    // Server-only intake: no browser InitiateCheckout fire. The eventId travels
-    // to the server, which fires the single CAPI event with this same ID.
+    trackInitiateCheckout({
+      content_name: 'جهاز مساج Theoria Pro',
+      value: 9500,
+      currency: 'DZD',
+      event_id: icEventId,
+    });
     advanceStep('initiate_checkout', undefined, {
       eventId: icEventId,
       metaEventName: 'InitiateCheckout',
@@ -716,25 +727,33 @@ export function trackFormValidationError(fieldOrMessage?: string): void {
 export const trackValidationFailed = trackFormValidationError;
 
 /**
- * 7. Purchase Completed - server-only intake: no browser fire. The single CAPI
- * Purchase is sent by the server on order creation. This only completes the
- * local funnel session.
+ * 7. Purchase Completed - flexible signature to accept (orderId, amount, name, eventId)
  */
 export function trackPurchaseSuccess(
   param1: string | number,
   param2: string | number,
   packageName?: string,
-  _eventId?: string
+  eventId?: string
 ): void {
+  const orderId = typeof param1 === 'string' ? param1 : String(param2);
   const amount = typeof param1 === 'number' ? param1 : (typeof param2 === 'number' ? param2 : 9500);
 
   if (typeof window === 'undefined') return;
+  const didFire = trackPurchase({
+    order_id: orderId,
+    value: amount,
+    currency: 'DZD',
+    content_name: packageName || 'جهاز مساج Theoria Pro',
+    event_id: eventId,
+  });
 
   const session = getCurrentSession();
   session.orderCompleted = true;
   saveCurrentSession(session);
 
-  advanceStep('purchase', undefined, { selectedPackage: packageName, totalPrice: amount });
+  if (didFire) {
+    advanceStep('purchase', undefined, { selectedPackage: packageName, totalPrice: amount });
+  }
 }
 
 export const trackPurchaseComplete = trackPurchaseSuccess;

@@ -89,23 +89,39 @@ $order_value = $order_data && isset($order_data['totalPrice']) ? (float)$order_d
     <!-- End Meta Pixel Code -->
 
     <?php if ($is_authorized): ?>
-    <!-- Server-only intake: the single CAPI Purchase is sent by the server on
-         order creation. No browser pixel fire here. -->
+    <!-- إطلاق حدث Purchase مرة واحدة فقط مع Deduplication Guard -->
     <script>
       const EVENT_ID = <?php echo json_encode($event_id); ?>;
       const ORDER_ID = <?php echo json_encode($order_id); ?>;
+      const ORDER_VALUE = <?php echo json_encode($order_value); ?>;
       const TOKEN = <?php echo json_encode($token); ?>;
-      console.log('[Meta Pixel server-only] Verified order, Purchase recorded server-side only:', EVENT_ID);
 
-      // Update the database to mark fb_sent = 1 (no pixel event fired)
-      fetch('/api/mark-fb-sent.php?order_id=' + encodeURIComponent(ORDER_ID) + '&token=' + encodeURIComponent(TOKEN))
-        .then(r => r.json())
-        .then(res => {
-          console.log('[Backend Database] fb_sent successfully marked as 1:', res);
-        })
-        .catch(err => {
-          console.warn('[Backend Database] Notice updating fb_sent:', err);
-        });
+      // حماية الريفريش عبر sessionStorage وحماية السيرفر عبر fb_sent
+      if (!sessionStorage.getItem('fired_' + ORDER_ID)) {
+        console.log('[Meta Pixel] Firing Purchase event with eventID:', EVENT_ID);
+        fbq('track', 'Purchase', {
+          value: ORDER_VALUE,
+          currency: 'DZD',
+          order_id: ORDER_ID,
+          content_name: 'جهاز مساج واسترخاء العينين Theoria',
+          content_type: 'product'
+        }, { eventID: EVENT_ID });
+
+        // تخزين محلي لمنع الإطلاق عند الريفريش
+        sessionStorage.setItem('fired_' + ORDER_ID, '1');
+
+        // تحديث قاعدة البيانات لتسجيل fb_sent = 1 فوراً
+        fetch('/api/mark-fb-sent.php?order_id=' + encodeURIComponent(ORDER_ID) + '&token=' + encodeURIComponent(TOKEN))
+          .then(r => r.json())
+          .then(res => {
+            console.log('[Backend Database] fb_sent successfully marked as 1:', res);
+          })
+          .catch(err => {
+            console.warn('[Backend Database] Notice updating fb_sent:', err);
+          });
+      } else {
+        console.warn('[Meta Deduplication Guard] Purchase event suppressed on reload (already fired in this session).');
+      }
     </script>
     <?php else: ?>
     <script>
