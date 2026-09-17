@@ -56,36 +56,18 @@ export function getFbcCookie(): string | null {
 }
 
 /**
- * Advanced Matching: attach hashed customer keys to all subsequent browser events.
- * fbq hashes plain values automatically — pass raw email/phone/name. Only non-empty
- * fields are sent. Call once the customer has typed their details (order submit)
- * so ViewContent/AddToCart/InitiateCheckout/Purchase all match better server-side.
+ * Advanced Matching is disabled in server-only intake mode: there are no browser
+ * events to attach keys to. Customer keys (em/ph/fn/ln) travel server-side via
+ * the order payload into CAPI user_data instead. Kept as a no-op for call-site
+ * compatibility.
  */
-export function setAdvancedMatching(params: {
+export function setAdvancedMatching(_params: {
   email?: string;
   phone?: string;
   firstName?: string;
   lastName?: string;
 }): void {
-  if (typeof window === 'undefined' || typeof window.fbq !== 'function') return;
-  try {
-    const adv: Record<string, string> = {};
-    const email = (params.email || '').trim().toLowerCase();
-    if (email && email.includes('@')) adv.em = email;
-    const digits = (params.phone || '').replace(/[^0-9]/g, '');
-    if (digits) {
-      adv.ph = digits.startsWith('0') ? `213${digits.substring(1)}` : digits;
-    }
-    const fn = (params.firstName || '').trim().toLowerCase();
-    if (fn) adv.fn = fn;
-    const ln = (params.lastName || '').trim().toLowerCase();
-    if (ln) adv.ln = ln;
-    if (Object.keys(adv).length === 0) return;
-    window.fbq('init', META_MAIN_PIXEL_ID, adv);
-    console.log('%c[Meta Pixel] Advanced matching keys attached (em/ph/fn/ln present as available)', 'color: #1877f2;');
-  } catch {
-    // ignore
-  }
+  // No-op in server-only intake mode (see docblock above).
 }
 
 /**
@@ -171,97 +153,33 @@ export function getPixelEventLogs(): Array<{
 }
 
 /**
- * Low-level call to window.fbq with safety checks and optional eventID for Deduplication
+ * Low-level pixel call — SERVER-ONLY INTAKE MODE.
+ * Browser fires are disabled: the server CAPI (api/analytics.ts, api/orders.ts,
+ * server.ts) is the single event source. This function only records the call in
+ * the local diagnostic log so the in-app dashboard stays truthful. The pixel
+ * script itself still loads (init only, sends nothing) to maintain the _fbp
+ * cookie the server uses for matching.
  */
-
-// Page-lifetime registry: the same eventName + eventID pair is handed to fbq exactly once.
-// Kills same-ID doubles from stub-queue replays, StrictMode double-effects, or retry paths.
-const firedBrowserEventKeys = new Set<string>();
-
 export function trackPixelEvent(
   eventName: string,
   parameters?: Record<string, unknown>,
   options?: { eventID?: string; test_event_code?: string }
 ): void {
   if (typeof window === 'undefined') return;
-
-  // Strict Protection: Purchase is strictly forbidden outside the Thank You page
-  if (eventName === 'Purchase') {
-    const isThankYouPage = window.location.pathname.includes('thank-you') ||
-                           window.location.search.includes('order_id') ||
-                           window.location.hash.includes('thank-you');
-
-    if (!isThankYouPage) {
-      console.warn(
-        '[Meta Pixel Protection Shield] Blocked Purchase outside Thank You page! Purchase is fired strictly once on the Thank You page after a real order is created.'
-      );
-      return;
-    }
-  }
-
   const eventId = options?.eventID;
-  const testEventCode = options?.test_event_code || (parameters?.test_event_code as string | undefined);
-
-  if (typeof window.fbq === 'function') {
-    try {
-      if (eventId) {
-        const dedupKey = `${eventName}|${eventId}`;
-        if (firedBrowserEventKeys.has(dedupKey)) {
-          console.warn(
-            `[Meta Pixel Deduplication Guard] "${eventName}" with eventID ${eventId} already handed to fbq on this page. Suppressed duplicate transport.`
-          );
-          logPixelEvent({
-            eventName,
-            eventId,
-            parameters: parameters || {},
-            status: 'dedup_blocked',
-            timestamp: Date.now(),
-          });
-          return;
-        }
-        firedBrowserEventKeys.add(dedupKey);
-      }
-
-      const mergedOptions: Record<string, unknown> = {};
-      if (eventId) mergedOptions.eventID = eventId;
-      if (testEventCode) mergedOptions.test_event_code = testEventCode;
-
-      if (Object.keys(mergedOptions).length > 0) {
-        // Official Meta format: fbq('track', eventName, parameters, { eventID: '...', test_event_code: '...' });
-        window.fbq('track', eventName, parameters, mergedOptions as { eventID?: string });
-      } else if (parameters) {
-        window.fbq('track', eventName, parameters);
-      } else {
-        window.fbq('track', eventName);
-      }
-
-      logPixelEvent({
-        eventName,
-        eventId,
-        parameters: parameters || {},
-        status: 'fired',
-        timestamp: Date.now(),
-      });
-      console.log(
-        `%c[Meta Pixel] %cTracked "${eventName}"%c with eventID: ${eventId || '(none)'}`,
-        'color: #1877f2; font-weight: bold',
-        'color: #059669; font-weight: bold',
-        'color: #4b5563;'
-      );
-    } catch (err) {
-      console.warn(`[Pixel] Error tracking ${eventName}:`, err);
-    }
-  } else {
-    // Pixel script is still loading in background
-    console.log(`[Pixel Event Queued] fbq('track', '${eventName}')`, parameters || '', options || '');
-    logPixelEvent({
-      eventName,
-      eventId,
-      parameters: parameters || {},
-      status: 'queued',
-      timestamp: Date.now(),
-    });
-  }
+  logPixelEvent({
+    eventName,
+    eventId,
+    parameters: parameters || {},
+    status: 'dedup_blocked',
+    timestamp: Date.now(),
+  });
+  console.log(
+    `%c[Meta Pixel server-only] %c"${eventName}" browser fire suppressed — server CAPI is the single source%c (ID: ${eventId || '(none)'})`,
+    'color: #1877f2; font-weight: bold',
+    'color: #6b7280; font-weight: bold',
+    'color: #4b5563;'
+  );
 }
 
 /**
@@ -441,19 +359,8 @@ export function trackPurchase(params: {
  */
 
 /**
- * Custom tracking helper - strictly routes standard events to fbq('track', ...)
+ * Custom tracking helper — disabled in server-only intake mode (no-op).
  */
-export function trackPixelCustom(eventName: string, parameters?: Record<string, unknown>): void {
-  if (typeof window !== 'undefined' && typeof window.fbq === 'function') {
-    try {
-      const standardEvents = ['Purchase', 'AddToCart', 'InitiateCheckout', 'ViewContent', 'Lead', 'Contact'];
-      if (standardEvents.includes(eventName)) {
-        window.fbq('track', eventName, parameters);
-      } else {
-        window.fbq('trackCustom', eventName, parameters);
-      }
-    } catch {
-      // ignore
-    }
-  }
+export function trackPixelCustom(_eventName: string, _parameters?: Record<string, unknown>): void {
+  // No browser events in server-only mode. Server CAPI is the single source.
 }

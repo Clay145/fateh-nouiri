@@ -311,10 +311,10 @@ export const MetaPixelDiagnosticView: React.FC = () => {
                 1. حدث المتصفح (Browser)
               </div>
               <p className="text-xs text-[#cbd5e1]">
-                يُرسل عبر <code className="text-sky-300 font-mono">fbq('track', 'Purchase')</code> مع معرف الحدث:
+                معطّل حالياً (وضع الخادم فقط): لا يُرسل المتصفح أي حدث. المصدر الوحيد هو الخادم:
               </p>
               <div className="mt-2 p-2 rounded-lg bg-black/40 font-mono text-[11px] text-sky-200 break-all">
-                eventID: purchase_TH-XXXX
+                browser intake: disabled (server-only)
               </div>
             </div>
             <div className="mt-3 pt-3 border-t border-white/5 text-[11px] text-[#94a3b8]">

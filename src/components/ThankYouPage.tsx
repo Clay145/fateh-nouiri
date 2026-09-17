@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import {
-  CheckCircle2,
+import {  CheckCircle2,
   ShieldCheck,
   AlertTriangle,
   ArrowRight,
@@ -10,7 +9,6 @@ import {
   Layers,
   Sparkles,
 } from 'lucide-react';
-import { getMetaConversionAmount, trackPurchase, setAdvancedMatching } from '../utils/pixel';
 
 interface VerificationResult {
   valid: boolean;
@@ -30,7 +28,6 @@ export const ThankYouPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [verification, setVerification] = useState<VerificationResult | null>(null);
   const [firedSuccessfully, setFiredSuccessfully] = useState(false);
-  const [sessionSuppressed, setSessionSuppressed] = useState(false);
 
   useEffect(() => {
     // 1. استخراج order_id و token من رابط الصفحة
@@ -128,67 +125,9 @@ export const ThankYouPage: React.FC = () => {
 
         if (data.valid) {
           const ORDER_ID = data.order_id || order_id;
-          const EVENT_ID = data.event_id || `purchase_${ORDER_ID}`;
-          const ORDER_VALUE = data.value || 9500;
-          const effectiveTestEventCode =
-            data.test_event_code ||
-            params.get('test_event_code') ||
-            params.get('testEventCode') ||
-            sessionStorage.getItem('meta_test_event_code') ||
-            undefined;
-
-          // فحص الحماية من الإطلاق المزدوج في المتصفح (Browser Reload Guard)
-          const sessionFired = sessionStorage.getItem('fired_' + ORDER_ID);
-          const localFired = localStorage.getItem('theoria_pixel_fired_' + ORDER_ID);
-
-          if (sessionFired || localFired) {
-            console.warn('[Deduplication Guard] Browser Purchase already fired for order ' + ORDER_ID + '. Duplicate suppressed on reload.');
-            setSessionSuppressed(true);
-            setLoading(false);
-            return;
-          }
-
-          // إطلاق حدث الشراء في المتصفح بنفس المعرف الموحد EVENT_ID
-          console.log(
-            '%c[Meta Pixel] Firing Browser Purchase event',
-            'color: #1877f2; font-weight: bold;',
-            {
-              order_id: ORDER_ID,
-              eventID: EVENT_ID,
-              value: ORDER_VALUE,
-              test_event_code: effectiveTestEventCode,
-            }
-          );
-
-          // Advanced Matching from the locally stored order (covers direct
-          // thank-you landings where the submit-time call never ran in this browser)
-          try {
-            const storedRaw = localStorage.getItem(`theoria_order_${ORDER_ID}`);
-            if (storedRaw) {
-              const stored = JSON.parse(storedRaw);
-              const storedName = String(stored.customerName || data.customerName || '').split(/\s+/);
-              setAdvancedMatching({
-                email: stored.email || undefined,
-                phone: stored.phone || undefined,
-                firstName: storedName[0],
-                lastName: storedName.slice(1).join(' ') || undefined,
-              });
-            }
-          } catch {
-            // ignore
-          }
-
-          const fired = trackPurchase({
-            order_id: ORDER_ID,
-            event_id: EVENT_ID,
-            value: ORDER_VALUE,
-            currency: 'DZD',
-            content_name: data.packageTitle || 'جهاز مساج واسترخاء العينين Theoria',
-            test_event_code: effectiveTestEventCode,
-          });
-
-          // حفظ في sessionStorage لمنع الإطلاق عند أي Refresh
-          sessionStorage.setItem('fired_' + ORDER_ID, '1');
+          // Server-only intake: the single CAPI Purchase is sent by the server
+          // on order creation. No browser fire here — just verify + mark.
+          console.log('[Meta Pixel server-only] Thank-you verified for order ' + ORDER_ID + ' — Purchase recorded server-side only.');
           setFiredSuccessfully(true);
 
           // تحديث محلي لـ fb_sent = 1
@@ -254,8 +193,8 @@ export const ThankYouPage: React.FC = () => {
             <div className="w-12 h-12 border-4 border-[#7dd3fc]/20 border-t-[#7dd3fc] rounded-full animate-spin mx-auto" />
             <p className="text-sm text-[#94a3b8]">جاري التحقق من صحة الطلب وأمان الحدث...</p>
           </div>
-        ) : verification && verification.valid && !sessionSuppressed ? (
-          /* Case 1: First-time valid visit -> Purchase fired once */
+        ) : verification && verification.valid ? (
+          /* Case 1: Valid visit -> order verified, Purchase recorded server-side */
           <div className="space-y-6 text-center animate-fadeIn">
             <div className="w-20 h-20 rounded-full bg-emerald-500/15 border-2 border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto shadow-lg">
               <CheckCircle2 className="w-10 h-10" />
@@ -318,47 +257,8 @@ export const ThankYouPage: React.FC = () => {
               </button>
             </div>
           </div>
-        ) : sessionSuppressed ? (
-          /* Case 2: Page reload (F5) or revisit -> Suppressed, 0 events */
-          <div className="space-y-6 text-center animate-fadeIn">
-            <div className="w-20 h-20 rounded-full bg-amber-500/15 border-2 border-amber-500/40 text-amber-400 flex items-center justify-center mx-auto shadow-lg">
-              <ShieldCheck className="w-10 h-10" />
-            </div>
-
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-bold">
-              <Lock className="w-4 h-4" />
-              طلب مسجل مسبقاً (تم حظر التكرار)
-            </div>
-
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-black text-white">تم استلام وتسجيل طلبك مسبقاً</h1>
-              <p className="text-sm text-[#94a3b8] mt-2 leading-relaxed">
-                رقم الطلب: <strong className="text-[#7dd3fc] font-mono">{verification?.order_id}</strong>
-              </p>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-[#162032] border border-amber-500/20 text-right text-xs space-y-2">
-              <div className="font-bold text-amber-300 flex items-center gap-1.5">
-                <AlertTriangle className="w-4 h-4 text-amber-400" />
-                حماية منع تكرار أحداث الشراء (Reload Guard Active)
-              </div>
-              <p className="text-[#cbd5e1] leading-relaxed">
-                تم احتساب هذا الطلب مسبقاً عبر نظام <strong className="text-white">fb_sent = 1</strong> و <strong className="text-white">sessionStorage</strong>. تم منع إطلاق أي حدث جديد لـ Meta لمنع احتساب عمليات شراء وهمية مكررة في مدير الإعلانات (Ads Manager).
-              </p>
-              <div className="p-2 rounded bg-black/40 font-mono text-[11px] text-amber-200">
-                النتيجة في فيسبوك الآن: 0 أحداث جديدة مضافة.
-              </div>
-            </div>
-
-            <button
-              onClick={handleReturnHome}
-              className="w-full py-3.5 px-6 rounded-xl bg-[#1e293b] hover:bg-[#334155] border border-white/10 text-white font-bold text-sm transition-all"
-            >
-              العودة للمتجر الرئيسي
-            </button>
-          </div>
         ) : (
-          /* Case 3: Unauthorized or direct visit without token -> Completely blocked */
+          /* Case 2: Unauthorized or direct visit without token -> Completely blocked */
           <div className="space-y-6 text-center animate-fadeIn">
             <div className="w-20 h-20 rounded-full bg-rose-500/15 border-2 border-rose-500/40 text-rose-400 flex items-center justify-center mx-auto shadow-lg">
               <AlertTriangle className="w-10 h-10" />
