@@ -306,6 +306,18 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     if (resolvedCapiName && capiEventId) {
       const headerVal = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
       const queryTestCode = req.query?.test_event_code;
+      // Cookie fallback: if the beacon body lacks fbp/fbc, read them straight
+      // from the request cookies; synthesize fbc from fbclid when present.
+      const cookieHeader = headerVal(req.headers['cookie']) || '';
+      const cookieFbp = cookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
+      let cookieFbc = cookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
+      const rawFbclid = req.query?.fbclid;
+      const fbclidVal =
+        (Array.isArray(rawFbclid) ? rawFbclid[0] : rawFbclid) ||
+        (body.fbclid ? String(body.fbclid) : undefined);
+      if (!cookieFbc && fbclidVal) {
+        cookieFbc = `fb.1.${Date.now()}.${fbclidVal}`;
+      }
       sendCapiStandardEvent({
         eventName: resolvedCapiName,
         eventId: capiEventId,
@@ -316,14 +328,18 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
           : body.selectedPackage
             ? String(body.selectedPackage)
             : undefined,
-        fbp: body.fbp ? String(body.fbp) : undefined,
-        fbc: body.fbc ? String(body.fbc) : undefined,
+        fbp: (body.fbp ? String(body.fbp) : undefined) || cookieFbp,
+        fbc: (body.fbc ? String(body.fbc) : undefined) || cookieFbc,
         userAgent: headerVal(req.headers['user-agent']),
         ip:
           headerVal(req.headers['x-forwarded-for'])?.split(',')[0]?.trim() ||
           headerVal(req.headers['x-real-ip']) ||
           undefined,
-        referer: headerVal(req.headers['referer']),
+        // Prefer the real page URL sent by the client so event_source_url is
+        // identical to the browser event's URL.
+        referer:
+          (body.pageUrl ? String(body.pageUrl) : undefined) ||
+          headerVal(req.headers['referer']),
         testEventCode:
           (Array.isArray(queryTestCode) ? queryTestCode[0] : queryTestCode) ||
           (body.testEventCode ? String(body.testEventCode) : undefined),

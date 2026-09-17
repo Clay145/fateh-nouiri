@@ -130,6 +130,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                           (req.headers['x-meta-test-event-code'] as string) ||
                           undefined;
 
+    // Cookie fallback for fbp/fbc (mirrors the local server order handler):
+    // if the POST body lacks them, read straight from request cookies;
+    // synthesize fbc from fbclid when present.
+    const headerFirst = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+    const orderCookieHeader = headerFirst(req.headers['cookie']) || '';
+    const orderCookieFbp = orderCookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
+    let orderCookieFbc = orderCookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
+    const rawOrderFbclid = req.query?.fbclid as string | string[] | undefined;
+    const orderFbclid =
+      (Array.isArray(rawOrderFbclid) ? rawOrderFbclid[0] : rawOrderFbclid) ||
+      (body.fbclid ? String(body.fbclid) : undefined);
+    if (!orderCookieFbc && orderFbclid) {
+      orderCookieFbc = `fb.1.${Date.now()}.${orderFbclid}`;
+    }
+    const resolvedFbp = (body.fbp ? String(body.fbp) : undefined) || orderCookieFbp;
+    const resolvedFbc = (body.fbc ? String(body.fbc) : undefined) || orderCookieFbc;
+
     const newOrder = {
       id: body.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       orderCode,
@@ -149,8 +166,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       fb_event_id: eventId,
       fb_token,
       fb_sent,
-      ...(body.fbp ? { fbp: String(body.fbp) } : {}),
-      ...(body.fbc ? { fbc: String(body.fbc) } : {}),
+      ...(resolvedFbp ? { fbp: resolvedFbp } : {}),
+      ...(resolvedFbc ? { fbc: resolvedFbc } : {}),
       capiStatus: testEventCode ? 'test_mode' : 'pending',
     };
 
@@ -180,8 +197,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (nameParts.length > 1) userData.ln = [hashSha256(nameParts.slice(1).join(' '))];
         if (body.wilaya) userData.st = [hashSha256(body.wilaya)];
         if (body.commune) userData.ct = [hashSha256(body.commune)];
-        if (body.fbp) userData.fbp = body.fbp;
-        if (body.fbc) userData.fbc = body.fbc;
+        if (resolvedFbp) userData.fbp = resolvedFbp;
+        if (resolvedFbc) userData.fbc = resolvedFbc;
 
         // Meta CAPI standard currency conversion: USD is the primary accepted currency for Algerian Ad accounts & fbevents.js
         const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();

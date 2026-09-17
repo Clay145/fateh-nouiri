@@ -289,6 +289,9 @@ function postEventToServer(
     testEventCode: getMetaTestEventCode(),
     fbp: getFbpCookie() || undefined,
     fbc: getFbcCookie() || undefined,
+    // Real page URL so server CAPI event_source_url is identical to the
+    // browser event's URL (better matching than the Referer header fallback).
+    pageUrl: window.location.href,
   };
 
   try {

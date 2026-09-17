@@ -172,6 +172,7 @@ export const ThankYouPage: React.FC = () => {
                 phone: stored.phone || undefined,
                 firstName: storedName[0],
                 lastName: storedName.slice(1).join(' ') || undefined,
+                externalId: ORDER_ID,
               });
             }
           } catch {

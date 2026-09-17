@@ -1096,6 +1096,7 @@ async function startServer() {
       testEventCode,
       fbp,
       fbc,
+      pageUrl,
     } = req.body || {};
     if (!sessionId || !event) {
       return res.status(400).json({ success: false, error: 'sessionId and event are required' });
@@ -1114,6 +1115,16 @@ async function startServer() {
       FUNNEL_TO_CAPI[event];
 
     if (resolvedMetaEventName && eventId) {
+      // Cookie fallback: if the beacon body lacks fbp/fbc (early fire, stripped
+      // payload, older client), read them straight from the request cookies —
+      // same pattern as the order handler. Synthesize fbc from fbclid if needed.
+      const trackCookieHeader = req.headers.cookie || '';
+      const trackCookieFbp = trackCookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
+      let trackCookieFbc = trackCookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
+      const trackFbclid = (req.query.fbclid as string) || (req.body || {}).fbclid;
+      if (!trackCookieFbc && trackFbclid) {
+        trackCookieFbc = `fb.1.${Date.now()}.${trackFbclid}`;
+      }
       processMetaCapiStandardEvent({
         eventName: resolvedMetaEventName,
         eventId: String(eventId),
@@ -1123,11 +1134,13 @@ async function startServer() {
         contentIds: Array.isArray(contentIds) ? contentIds.map(String) : undefined,
         contentType: contentType ? String(contentType) : undefined,
         numItems: Number(numItems) || undefined,
-        fbp: fbp ? String(fbp) : undefined,
-        fbc: fbc ? String(fbc) : undefined,
+        fbp: (fbp ? String(fbp) : undefined) || trackCookieFbp,
+        fbc: (fbc ? String(fbc) : undefined) || trackCookieFbc,
         userAgent: (req.headers['user-agent'] as string) || undefined,
         ip: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || undefined,
-        referer: (req.headers['referer'] as string) || undefined,
+        // Prefer the real page URL sent by the client so event_source_url is
+        // identical to the browser event's URL.
+        referer: (pageUrl ? String(pageUrl) : undefined) || (req.headers['referer'] as string) || undefined,
         testEventCode: (req.query.test_event_code as string) || (testEventCode ? String(testEventCode) : undefined),
       }).catch((error) => console.error('[Meta CAPI Standard Event Error]', error));
     }

@@ -119,20 +119,22 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
     isSubmittingRef.current = true;
     setIsSubmitting(true);
 
+    const generatedOrderCode = `TH-${Math.floor(10000 + Math.random() * 90000)}`;
+    const eventId = generatePurchaseEventId(generatedOrderCode);
+    const fbp = getFbpCookie();
+    const fbc = getFbcCookie();
+
     // Advanced Matching: attach customer keys so the thank-you Purchase
-    // (browser + CAPI) matches at the highest quality
+    // (browser + CAPI) matches at the highest quality. external_id mirrors
+    // the server CAPI external_id (the order code).
     const nameParts = cleanName.split(/\s+/);
     setAdvancedMatching({
       email: cleanEmail || undefined,
       phone: cleanPhone,
       firstName: nameParts[0],
       lastName: nameParts.slice(1).join(' ') || undefined,
+      externalId: generatedOrderCode,
     });
-
-    const generatedOrderCode = `TH-${Math.floor(10000 + Math.random() * 90000)}`;
-    const eventId = generatePurchaseEventId(generatedOrderCode);
-    const fbp = getFbpCookie();
-    const fbc = getFbcCookie();
 
     const placedData: Partial<PlacedOrder> = {
       id: `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,

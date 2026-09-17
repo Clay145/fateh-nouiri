@@ -60,12 +60,15 @@ export function getFbcCookie(): string | null {
  * fbq hashes plain values automatically — pass raw email/phone/name. Only non-empty
  * fields are sent. Call once the customer has typed their details (order submit)
  * so ViewContent/AddToCart/InitiateCheckout/Purchase all match better server-side.
+ * external_id mirrors the server CAPI external_id (the order code) so both sides
+ * match on the identical key.
  */
 export function setAdvancedMatching(params: {
   email?: string;
   phone?: string;
   firstName?: string;
   lastName?: string;
+  externalId?: string;
 }): void {
   if (typeof window === 'undefined' || typeof window.fbq !== 'function') return;
   try {
@@ -80,9 +83,11 @@ export function setAdvancedMatching(params: {
     if (fn) adv.fn = fn;
     const ln = (params.lastName || '').trim().toLowerCase();
     if (ln) adv.ln = ln;
+    const externalId = (params.externalId || '').trim();
+    if (externalId) adv.external_id = externalId;
     if (Object.keys(adv).length === 0) return;
     window.fbq('init', META_MAIN_PIXEL_ID, adv);
-    console.log('%c[Meta Pixel] Advanced matching keys attached (em/ph/fn/ln present as available)', 'color: #1877f2;');
+    console.log('%c[Meta Pixel] Advanced matching keys attached (em/ph/fn/ln/external_id as available)', 'color: #1877f2;');
   } catch {
     // ignore
   }
