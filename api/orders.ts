@@ -84,20 +84,11 @@ function sanitizeAndValidateFbc(rawFbc?: string | null, rawFbclid?: string | nul
     }
   }
 
-  // Fallback: If no valid fbc was passed, but a valid fbclid is present
-  if (rawFbclid && typeof rawFbclid === 'string') {
-    let clean = rawFbclid.trim().replace(/^["']|["']$/g, '');
-    try {
-      clean = decodeURIComponent(clean);
-    } catch {
-      // keep clean
-    }
-    if (isValidFbclid(clean)) {
-      return `fb.1.${Date.now()}.${clean}`;
-    }
-  }
-
-  // Meta official requirement: if invalid or missing, omit fbc entirely!
+  // IMPORTANT: Do NOT synthesize fbc on the server using Date.now() as the timestamp.
+  // The server cannot know the original ad-click time, so any synthesized fbc will have
+  // a wrong creation timestamp — Meta detects this as a "modified fbclid value" warning.
+  // fbc synthesis is handled client-side in pixel.ts getFbcCookie() where the correct
+  // click timestamp from the URL is available. If no valid fbc arrived, omit entirely.
   return undefined;
 }
 

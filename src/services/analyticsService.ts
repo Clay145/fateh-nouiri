@@ -247,14 +247,13 @@ function getMetaTestEventCode(): string | undefined {
       return (
         params.get('test_event_code') ||
         sessionStorage.getItem('meta_test_event_code') ||
-        'TEST45919' ||
         undefined
       );
     }
   } catch {
     // ignore
   }
-  return 'TEST45919';
+  return undefined;
 }
 
 function postEventToServer(
