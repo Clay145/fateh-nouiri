@@ -316,6 +316,8 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
     fb_token: initialToken,
     fb_sent: 0,
     test_event_code: effectiveTestCode,
+    fbp: orderData.fbp || undefined,
+    fbc: orderData.fbc || undefined,
   };
 
   // 1. Permanent Cloud Storage: Write to Firebase Firestore

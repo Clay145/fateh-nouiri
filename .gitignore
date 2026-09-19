@@ -10,3 +10,4 @@ data/
 *.backup.json
 analytics_data.json
 orders_data.json
+.vercel

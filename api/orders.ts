@@ -30,6 +30,77 @@ function hashSha256(val: string): string {
   return crypto.createHash('sha256').update(val.trim().toLowerCase()).digest('hex');
 }
 
+/**
+ * Validate that an fbclid string is authentic, not truncated, and contains valid characters.
+ * Genuine Meta Click IDs are Base64/Base64url-like tokens, typically 25 to 100+ characters.
+ */
+function isValidFbclid(fbclid?: string | null): boolean {
+  if (!fbclid || typeof fbclid !== 'string') return false;
+  const clean = fbclid.trim().replace(/^["']|["']$/g, '');
+  const blockedPlaceholders = [
+    'test',
+    'dummy',
+    'undefined',
+    'null',
+    'none',
+    'iwar0123456789abcdef',
+    '123456',
+    'fake',
+  ];
+  if (blockedPlaceholders.includes(clean.toLowerCase())) return false;
+  if (clean.length < 25 || clean.length > 500) return false;
+  if (!/^[a-zA-Z0-9_\-]+$/.test(clean)) return false;
+  return true;
+}
+
+/**
+ * Validate and clean an fbc string against Meta's official specification:
+ * Format: fb.{subdomainIndex}.{creationTimeMs}.{fbclid}
+ * If a raw fbclid is provided without fbc, it can synthesize a valid fbc.
+ * Omit if invalid, truncated, expired (>90 days), or future-dated.
+ */
+function sanitizeAndValidateFbc(rawFbc?: string | null, rawFbclid?: string | null): string | undefined {
+  if (rawFbc && typeof rawFbc === 'string') {
+    let clean = rawFbc.trim().replace(/^["']|["']$/g, '');
+    try {
+      clean = decodeURIComponent(clean);
+    } catch {
+      // keep clean
+    }
+
+    const match = clean.match(/^fb\.([0-9]+)\.([0-9]{10,15})\.([a-zA-Z0-9_\-]+)$/);
+    if (match) {
+      const subdomainIndex = match[1];
+      const creationTimeMs = Number(match[2]);
+      const fbclid = match[3];
+
+      if (isValidFbclid(fbclid)) {
+        const now = Date.now();
+        const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+        if (creationTimeMs <= now + 300000 && creationTimeMs >= now - ninetyDaysMs) {
+          return `fb.${subdomainIndex}.${creationTimeMs}.${fbclid}`;
+        }
+      }
+    }
+  }
+
+  // Fallback: If no valid fbc was passed, but a valid fbclid is present
+  if (rawFbclid && typeof rawFbclid === 'string') {
+    let clean = rawFbclid.trim().replace(/^["']|["']$/g, '');
+    try {
+      clean = decodeURIComponent(clean);
+    } catch {
+      // keep clean
+    }
+    if (isValidFbclid(clean)) {
+      return `fb.1.${Date.now()}.${clean}`;
+    }
+  }
+
+  // Meta official requirement: if invalid or missing, omit fbc entirely!
+  return undefined;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -130,22 +201,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                           (req.headers['x-meta-test-event-code'] as string) ||
                           undefined;
 
-    // Cookie fallback for fbp/fbc (mirrors the local server order handler):
-    // if the POST body lacks them, read straight from request cookies;
-    // synthesize fbc from fbclid when present.
+    // Cookie fallback for fbp/fbc with strict sanitization and validation:
     const headerFirst = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
     const orderCookieHeader = headerFirst(req.headers['cookie']) || '';
-    const orderCookieFbp = orderCookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
-    let orderCookieFbc = orderCookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
+    let orderCookieFbp = orderCookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
+    if (orderCookieFbp) {
+      orderCookieFbp = orderCookieFbp.trim().replace(/^["']|["']$/g, '');
+      try { orderCookieFbp = decodeURIComponent(orderCookieFbp); } catch {}
+    }
+    let rawOrderCookieFbc = orderCookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
+    if (rawOrderCookieFbc) {
+      rawOrderCookieFbc = rawOrderCookieFbc.trim().replace(/^["']|["']$/g, '');
+      try { rawOrderCookieFbc = decodeURIComponent(rawOrderCookieFbc); } catch {}
+    }
+
     const rawOrderFbclid = req.query?.fbclid as string | string[] | undefined;
     const orderFbclid =
       (Array.isArray(rawOrderFbclid) ? rawOrderFbclid[0] : rawOrderFbclid) ||
       (body.fbclid ? String(body.fbclid) : undefined);
-    if (!orderCookieFbc && orderFbclid) {
-      orderCookieFbc = `fb.1.${Date.now()}.${orderFbclid}`;
-    }
+
     const resolvedFbp = (body.fbp ? String(body.fbp) : undefined) || orderCookieFbp;
-    const resolvedFbc = (body.fbc ? String(body.fbc) : undefined) || orderCookieFbc;
+    const resolvedFbc = sanitizeAndValidateFbc(
+      (body.fbc ? String(body.fbc) : undefined) || rawOrderCookieFbc,
+      orderFbclid
+    );
 
     const newOrder = {
       id: body.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,

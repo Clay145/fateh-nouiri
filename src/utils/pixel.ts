@@ -31,27 +31,130 @@ export function getFbpCookie(): string | null {
 }
 
 /**
- * Extract _fbc (Meta click identifier) from document cookies or current URL ?fbclid=
+ * Validate that an fbclid string is authentic, not truncated, and contains valid characters.
+ * Genuine Meta Click IDs are Base64/Base64url-like tokens, typically 25 to 100+ characters.
+ */
+export function isValidFbclid(fbclid?: string | null): boolean {
+  if (!fbclid || typeof fbclid !== 'string') return false;
+  const clean = fbclid.trim().replace(/^["']|["']$/g, '');
+  // Disallow known placeholders, test values, or common dummy strings
+  const blockedPlaceholders = [
+    'test',
+    'dummy',
+    'undefined',
+    'null',
+    'none',
+    'iwar0123456789abcdef',
+    '123456',
+    'fake',
+  ];
+  if (blockedPlaceholders.includes(clean.toLowerCase())) return false;
+  // Meta click IDs must be at least 25 characters and contain only base64url characters
+  if (clean.length < 25 || clean.length > 500) return false;
+  if (!/^[a-zA-Z0-9_\-]+$/.test(clean)) return false;
+  return true;
+}
+
+/**
+ * Validate and clean an fbc string against Meta's official specification:
+ * Format: fb.{subdomainIndex}.{creationTimeMs}.{fbclid}
+ * Omit if invalid, truncated, expired (>90 days), or future-dated.
+ */
+export function validateAndFormatFbc(rawFbc?: string | null): string | null {
+  if (!rawFbc || typeof rawFbc !== 'string') return null;
+  let clean = rawFbc.trim().replace(/^["']|["']$/g, '');
+  try {
+    clean = decodeURIComponent(clean);
+  } catch {
+    // Keep clean as is if decodeURIComponent fails
+  }
+
+  // Strict regex for Meta fbc format: fb.<index>.<creationTimeMs>.<fbclid>
+  const match = clean.match(/^fb\.([0-9]+)\.([0-9]{10,15})\.([a-zA-Z0-9_\-]+)$/);
+  if (!match) return null;
+
+  const subdomainIndex = match[1];
+  const creationTimeMs = Number(match[2]);
+  const fbclid = match[3];
+
+  if (!isValidFbclid(fbclid)) return null;
+
+  const now = Date.now();
+  // Must not be in the future (with 5 min clock skew tolerance)
+  if (creationTimeMs > now + 300000) return null;
+  // Must not be older than 90 days (Meta fbc expiration window)
+  const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+  if (creationTimeMs < now - ninetyDaysMs) return null;
+
+  return `fb.${subdomainIndex}.${creationTimeMs}.${fbclid}`;
+}
+
+const FBC_SESSION_STORAGE_KEY = 'theoria_meta_fbc_cache';
+
+/**
+ * Extract and validate _fbc (Meta click identifier) from document cookies or current URL ?fbclid=.
+ * Locks the original click creation timestamp for the session and writes a 1st-party cookie.
+ * Returns null if missing or invalid (Meta CAPI rule: omit invalid/dummy fbc).
  */
 export function getFbcCookie(): string | null {
   if (typeof document === 'undefined') return null;
-  // 1. Check existing cookie
-  const match = document.cookie.match(/(^|;\s*)_fbc=([^;]+)/);
-  if (match) return decodeURIComponent(match[2]);
 
-  // 2. Check URL query params for fbclid
+  // 1. Check existing _fbc cookie
   try {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const fbclid = params.get('fbclid');
-      if (fbclid) {
-        // Standard Meta format: fb.1.{creation_time_ms}.{fbclid}
-        return `fb.1.${Date.now()}.${fbclid}`;
+    const match = document.cookie.match(/(?:^|;\s*)_fbc=([^;]+)/);
+    if (match) {
+      const parsedCookie = validateAndFormatFbc(match[1]);
+      if (parsedCookie) return parsedCookie;
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2. Check sessionStorage cache (locks original creation timestamp for the session)
+  try {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      const cached = sessionStorage.getItem(FBC_SESSION_STORAGE_KEY);
+      if (cached) {
+        const validatedCache = validateAndFormatFbc(cached);
+        if (validatedCache) return validatedCache;
       }
     }
   } catch {
     // ignore
   }
+
+  // 3. Check URL query params for raw fbclid
+  try {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const rawFbclid = params.get('fbclid');
+      if (isValidFbclid(rawFbclid)) {
+        const cleanFbclid = rawFbclid!.trim().replace(/^["']|["']$/g, '');
+        const creationTime = Date.now();
+        const synthesized = `fb.1.${creationTime}.${cleanFbclid}`;
+
+        // Store in sessionStorage to lock timestamp across navigation
+        try {
+          sessionStorage.setItem(FBC_SESSION_STORAGE_KEY, synthesized);
+        } catch {
+          // ignore
+        }
+
+        // Store in 1st-party cookie (90 days)
+        try {
+          const expires = new Date(creationTime + 90 * 24 * 60 * 60 * 1000).toUTCString();
+          document.cookie = `_fbc=${synthesized}; path=/; expires=${expires}; SameSite=Lax`;
+        } catch {
+          // ignore
+        }
+
+        return synthesized;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   return null;
 }
 
@@ -423,11 +526,7 @@ export function trackPurchase(params: {
     payload.test_event_code = testEventCode;
   }
 
-  // Attach client context matching parameters
-  const fbp = getFbpCookie();
-  const fbc = getFbcCookie();
-  if (fbp) payload._fbp = fbp;
-  if (fbc) payload._fbc = fbc;
+  // 3. Fire to browser Pixel with identical eventID and test_event_code (fbevents.js reads _fbp/_fbc from 1st-party cookies natively)
 
   // 3. Fire to browser Pixel with identical eventID and test_event_code
   trackPixelEvent('Purchase', payload, {

@@ -94,6 +94,77 @@ function splitName(fullName: string): { firstName: string; lastName: string } {
 }
 
 /**
+ * Validate that an fbclid string is authentic, not truncated, and contains valid characters.
+ * Genuine Meta Click IDs are Base64/Base64url-like tokens, typically 25 to 100+ characters.
+ */
+function isValidFbclid(fbclid?: string | null): boolean {
+  if (!fbclid || typeof fbclid !== 'string') return false;
+  const clean = fbclid.trim().replace(/^["']|["']$/g, '');
+  const blockedPlaceholders = [
+    'test',
+    'dummy',
+    'undefined',
+    'null',
+    'none',
+    'iwar0123456789abcdef',
+    '123456',
+    'fake',
+  ];
+  if (blockedPlaceholders.includes(clean.toLowerCase())) return false;
+  if (clean.length < 25 || clean.length > 500) return false;
+  if (!/^[a-zA-Z0-9_\-]+$/.test(clean)) return false;
+  return true;
+}
+
+/**
+ * Validate and clean an fbc string against Meta's official specification:
+ * Format: fb.{subdomainIndex}.{creationTimeMs}.{fbclid}
+ * If an raw fbclid is provided without fbc, it can synthesize a valid fbc.
+ * Omit if invalid, truncated, expired (>90 days), or future-dated.
+ */
+function sanitizeAndValidateFbc(rawFbc?: string | null, rawFbclid?: string | null): string | undefined {
+  if (rawFbc && typeof rawFbc === 'string') {
+    let clean = rawFbc.trim().replace(/^["']|["']$/g, '');
+    try {
+      clean = decodeURIComponent(clean);
+    } catch {
+      // keep clean
+    }
+
+    const match = clean.match(/^fb\.([0-9]+)\.([0-9]{10,15})\.([a-zA-Z0-9_\-]+)$/);
+    if (match) {
+      const subdomainIndex = match[1];
+      const creationTimeMs = Number(match[2]);
+      const fbclid = match[3];
+
+      if (isValidFbclid(fbclid)) {
+        const now = Date.now();
+        const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+        if (creationTimeMs <= now + 300000 && creationTimeMs >= now - ninetyDaysMs) {
+          return `fb.${subdomainIndex}.${creationTimeMs}.${fbclid}`;
+        }
+      }
+    }
+  }
+
+  // Fallback: If no valid fbc was passed, but a valid fbclid is present
+  if (rawFbclid && typeof rawFbclid === 'string') {
+    let clean = rawFbclid.trim().replace(/^["']|["']$/g, '');
+    try {
+      clean = decodeURIComponent(clean);
+    } catch {
+      // keep clean
+    }
+    if (isValidFbclid(clean)) {
+      return `fb.1.${Date.now()}.${clean}`;
+    }
+  }
+
+  // Meta official requirement: if invalid or missing, omit fbc entirely!
+  return undefined;
+}
+
+/**
  * Calculate Event Match Quality estimation (out of 10)
  */
 function calculateMatchScore(userData: Record<string, unknown>): number {
@@ -134,7 +205,8 @@ async function processMetaCapiStandardEvent(params: {
 
   const userData: Record<string, unknown> = { country: [hashSha256('dz')] };
   if (params.fbp) userData.fbp = params.fbp;
-  if (params.fbc) userData.fbc = params.fbc;
+  const validatedFbc = sanitizeAndValidateFbc(params.fbc);
+  if (validatedFbc) userData.fbc = validatedFbc;
   if (params.ip) userData.client_ip_address = params.ip;
   if (params.userAgent) userData.client_user_agent = params.userAgent;
 
@@ -245,7 +317,8 @@ async function processMetaCapiPurchase(
   if (order.wilaya) userData.st = [hashSha256(order.wilaya)];
 
   if (clientContext.fbp) userData.fbp = clientContext.fbp;
-  if (clientContext.fbc) userData.fbc = clientContext.fbc;
+  const validatedFbc = sanitizeAndValidateFbc(clientContext.fbc);
+  if (validatedFbc) userData.fbc = validatedFbc;
   if (clientContext.ip) userData.client_ip_address = clientContext.ip;
   if (clientContext.userAgent) userData.client_user_agent = clientContext.userAgent;
 
@@ -737,18 +810,22 @@ async function startServer() {
     const fb_sent = 0;
 
     // Extract Meta matching identifiers
+    // Extract Meta matching identifiers with sanitization and validation
     const cookieHeader = req.headers.cookie || '';
-    const cookieFbp = cookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
-    let cookieFbc = cookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
-
-    // If query has fbclid and _fbc is not set, generate standard fb.1.timestamp.fbclid
-    const fbclid = (req.query.fbclid as string) || body.fbclid;
-    if (!cookieFbc && fbclid) {
-      cookieFbc = `fb.1.${Date.now()}.${fbclid}`;
+    let cookieFbp = cookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
+    if (cookieFbp) {
+      cookieFbp = cookieFbp.trim().replace(/^["']|["']$/g, '');
+      try { cookieFbp = decodeURIComponent(cookieFbp); } catch {}
+    }
+    let rawCookieFbc = cookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
+    if (rawCookieFbc) {
+      rawCookieFbc = rawCookieFbc.trim().replace(/^["']|["']$/g, '');
+      try { rawCookieFbc = decodeURIComponent(rawCookieFbc); } catch {}
     }
 
+    const rawFbclid = (req.query.fbclid as string) || body.fbclid;
+    const fbc = sanitizeAndValidateFbc(body.fbc || rawCookieFbc, rawFbclid);
     const fbp = body.fbp || cookieFbp;
-    const fbc = body.fbc || cookieFbc;
 
     const newOrder: OrderItem = {
       id: body.id || `ord_${Date.now()}`,
@@ -965,9 +1042,11 @@ async function startServer() {
     const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
     const userAgent = req.headers['user-agent'] || '';
 
+    const testFbc = sanitizeAndValidateFbc(req.body?.fbc, req.body?.fbclid);
+
     const result = await processMetaCapiPurchase(mockOrder, {
       fbp: `fb.1.${Date.now()}.${Math.floor(Math.random() * 1000000000)}`,
-      fbc: `fb.1.${Date.now()}.IwAR0123456789abcdef`,
+      ...(testFbc ? { fbc: testFbc } : {}),
       ip: clientIp,
       userAgent,
       testEventCode: testCode || process.env.META_TEST_EVENT_CODE,
@@ -1115,16 +1194,23 @@ async function startServer() {
       FUNNEL_TO_CAPI[event];
 
     if (resolvedMetaEventName && eventId) {
-      // Cookie fallback: if the beacon body lacks fbp/fbc (early fire, stripped
-      // payload, older client), read them straight from the request cookies —
-      // same pattern as the order handler. Synthesize fbc from fbclid if needed.
+      // Cookie fallback: if the beacon body lacks fbp/fbc, read from request cookies
+      // and sanitize/validate fbc and fbclid strictly
       const trackCookieHeader = req.headers.cookie || '';
-      const trackCookieFbp = trackCookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
-      let trackCookieFbc = trackCookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
-      const trackFbclid = (req.query.fbclid as string) || (req.body || {}).fbclid;
-      if (!trackCookieFbc && trackFbclid) {
-        trackCookieFbc = `fb.1.${Date.now()}.${trackFbclid}`;
+      let trackCookieFbp = trackCookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
+      if (trackCookieFbp) {
+        trackCookieFbp = trackCookieFbp.trim().replace(/^["']|["']$/g, '');
+        try { trackCookieFbp = decodeURIComponent(trackCookieFbp); } catch {}
       }
+      let trackRawCookieFbc = trackCookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
+      if (trackRawCookieFbc) {
+        trackRawCookieFbc = trackRawCookieFbc.trim().replace(/^["']|["']$/g, '');
+        try { trackRawCookieFbc = decodeURIComponent(trackRawCookieFbc); } catch {}
+      }
+
+      const trackFbclid = (req.query.fbclid as string) || (req.body || {}).fbclid;
+      const validatedTrackFbc = sanitizeAndValidateFbc((fbc ? String(fbc) : undefined) || trackRawCookieFbc, trackFbclid);
+
       processMetaCapiStandardEvent({
         eventName: resolvedMetaEventName,
         eventId: String(eventId),
@@ -1135,7 +1221,7 @@ async function startServer() {
         contentType: contentType ? String(contentType) : undefined,
         numItems: Number(numItems) || undefined,
         fbp: (fbp ? String(fbp) : undefined) || trackCookieFbp,
-        fbc: (fbc ? String(fbc) : undefined) || trackCookieFbc,
+        fbc: validatedTrackFbc,
         userAgent: (req.headers['user-agent'] as string) || undefined,
         ip: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || undefined,
         // Prefer the real page URL sent by the client so event_source_url is
