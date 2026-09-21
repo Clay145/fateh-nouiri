@@ -14,8 +14,8 @@ interface VercelResponse {
 }
 
 // Admin-only Meta status (contains order metadata — never public).
-import { applyCors } from './_cors';
-import { extractBearerToken, verifyAdminToken } from './_adminAuth';
+import { applyCors } from './_cors.js';
+import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
 
 declare global {
   var __THEORIA_ORDERS__: any[] | undefined;

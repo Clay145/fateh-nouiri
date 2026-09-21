@@ -15,7 +15,7 @@ interface VercelResponse {
   setHeader: (name: string, value: string) => VercelResponse;
 }
 
-import { applyCors } from './_cors';
+import { applyCors } from './_cors.js';
 
 declare global {
   var __THEORIA_ORDERS__: any[] | undefined;
@@ -48,7 +48,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // back to Firestore (best-effort) before declaring the order unknown.
   if (!order) {
     try {
-      const { adminGetOrderByCode } = await import('./_firestoreAdmin');
+      const { adminGetOrderByCode } = await import('./_firestoreAdmin.js');
       order = (await adminGetOrderByCode(order_id)) || undefined;
     } catch {
       // ignore — fallbackMode below

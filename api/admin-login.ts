@@ -1,6 +1,6 @@
 // Vercel Serverless Function compatible types
-import { applyCors } from './_cors';
-import { isAdminConfigured, issueAdminToken, verifyAdminPassword } from './_adminAuth';
+import { applyCors } from './_cors.js';
+import { isAdminConfigured, issueAdminToken, verifyAdminPassword } from './_adminAuth.js';
 
 interface VercelRequest {
   method?: string;

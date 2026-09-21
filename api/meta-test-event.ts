@@ -15,8 +15,8 @@ interface VercelResponse {
   setHeader: (name: string, value: string) => VercelResponse;
 }
 
-import { applyCors } from './_cors';
-import { extractBearerToken, verifyAdminToken } from './_adminAuth';
+import { applyCors } from './_cors.js';
+import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
 
 const META_PIXEL_ID = '28477410788542282';
 

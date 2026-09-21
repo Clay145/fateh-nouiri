@@ -1,7 +1,7 @@
 import crypto from 'crypto';
-import { applyCors } from './_cors';
-import { extractBearerToken, verifyAdminToken } from './_adminAuth';
-import { adminDeleteOrder, adminGetOrderByCode, adminListOrders, adminPatchOrder, isAdminDbConfigured } from './_firestoreAdmin';
+import { applyCors } from './_cors.js';
+import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
+import { adminDeleteOrder, adminGetOrderByCode, adminListOrders, adminPatchOrder, isAdminDbConfigured } from './_firestoreAdmin.js';
 
 interface VercelRequest {
   method?: string;

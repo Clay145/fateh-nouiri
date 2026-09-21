@@ -13,7 +13,7 @@ interface VercelResponse {
   setHeader: (name: string, value: string) => VercelResponse;
 }
 
-import { applyCors } from './_cors';
+import { applyCors } from './_cors.js';
 
 declare global {
   var __THEORIA_ORDERS__: any[] | undefined;
@@ -41,7 +41,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Mirror to the durable record so cross-instance verify sees fb_sent=1.
   try {
-    const { adminSetFbSent } = await import('./_firestoreAdmin');
+    const { adminSetFbSent } = await import('./_firestoreAdmin.js');
     await adminSetFbSent(order_id);
   } catch {
     // ignore — memory update above is authoritative for this instance
