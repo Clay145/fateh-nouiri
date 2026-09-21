@@ -49,6 +49,26 @@ export function removeAdminToken(): void {
   }
 }
 
+export interface OrdersApiDiagnostics {
+  /** Result of the last GET /api/orders attempt made inside getOrders(). */
+  apiStatus: 'ok' | 'unauthorized' | 'forbidden' | 'error' | 'skipped-no-token' | null;
+  /** `source` field returned by the API (memory+firestore | memory | empty). */
+  apiSource: string | null;
+  /** `firestoreConfigured` flag returned by the API, when present. */
+  firestoreConfigured: boolean | null;
+}
+
+let lastOrdersApiDiagnostics: OrdersApiDiagnostics = {
+  apiStatus: null,
+  apiSource: null,
+  firestoreConfigured: null,
+};
+
+/** Read-only snapshot of the last server-API leg of getOrders() for dashboard banners. */
+export function getLastOrdersApiStatus(): OrdersApiDiagnostics {
+  return { ...lastOrdersApiDiagnostics };
+}
+
 export async function loginAdmin(password: string): Promise<boolean> {
   const cleanPassword = password.trim();
   if (!cleanPassword) return false;
@@ -220,30 +240,56 @@ export async function getOrders(): Promise<PlacedOrder[]> {
   // 2. Always fetch and merge from Server API (ensures orders submitted via backend from other phones/devices are included)
   try {
     const token = getAdminToken();
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (!token) {
+      lastOrdersApiDiagnostics = { apiStatus: 'skipped-no-token', apiSource: null, firestoreConfigured: null };
+    } else {
+      const headers: Record<string, string> = {};
+      headers['Authorization'] = `Bearer ${token}`;
 
-    const res = await fetch('/api/orders', { headers });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success && Array.isArray(data.orders)) {
-        data.orders
-          .filter((o: PlacedOrder) => o.id !== 'ord_1' && o.id !== 'ord_2' && o.id !== 'ord_3' && !o.notes?.includes('طلب تجريبي'))
-          .forEach((o: PlacedOrder) => {
-            const key = o.id || o.orderCode;
-            // Prefer existing firestore data if present, or fill in server order
-            if (!orderMap.has(key)) {
-              orderMap.set(key, o);
-            } else {
-              // Merge in server details if newer
-              const existing = orderMap.get(key)!;
-              orderMap.set(key, { ...existing, ...o });
-            }
-          });
+      const res = await fetch('/api/orders', { headers });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.orders)) {
+          data.orders
+            .filter((o: PlacedOrder) => o.id !== 'ord_1' && o.id !== 'ord_2' && o.id !== 'ord_3' && !o.notes?.includes('طلب تجريبي'))
+            .forEach((o: PlacedOrder) => {
+              const key = o.id || o.orderCode;
+              // Prefer existing firestore data if present, or fill in server order
+              if (!orderMap.has(key)) {
+                orderMap.set(key, o);
+              } else {
+                // Merge in server details if newer
+                const existing = orderMap.get(key)!;
+                orderMap.set(key, { ...existing, ...o });
+              }
+            });
+        }
+        lastOrdersApiDiagnostics = {
+          apiStatus: 'ok',
+          apiSource: typeof data?.source === 'string' ? data.source : null,
+          firestoreConfigured: typeof data?.firestoreConfigured === 'boolean' ? data.firestoreConfigured : null,
+        };
+      } else if (res.status === 401 || res.status === 403) {
+        // Definitive rejection (e.g. secret rotated since login): purge the
+        // stale token so the 5s poller stops spamming 401s. The dashboard
+        // reads getLastOrdersApiStatus() and prompts a fresh login.
+        removeAdminToken();
+        lastOrdersApiDiagnostics = {
+          apiStatus: res.status === 401 ? 'unauthorized' : 'forbidden',
+          apiSource: null,
+          firestoreConfigured: null,
+        };
+      } else {
+        lastOrdersApiDiagnostics = { apiStatus: 'error', apiSource: null, firestoreConfigured: null };
       }
     }
   } catch (serverErr) {
     console.warn('Server orders API warning:', serverErr);
+    // Network-level failure (backend unreachable): keep the stored token, but
+    // record it so the dashboard can show a connectivity hint.
+    if (lastOrdersApiDiagnostics.apiStatus !== 'unauthorized' && lastOrdersApiDiagnostics.apiStatus !== 'forbidden') {
+      lastOrdersApiDiagnostics = { apiStatus: 'error', apiSource: null, firestoreConfigured: null };
+    }
   }
 
   const merged = Array.from(orderMap.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));

@@ -3,6 +3,8 @@ import { PlacedOrder, OrderStatus } from '../types';
 import { ALGERIA_WILAYAS } from '../data/wilayas';
 import {
   getOrders,
+  getLastOrdersApiStatus,
+  OrdersApiDiagnostics,
   updateOrderStatus,
   deleteOrder,
   submitOrder,
@@ -55,6 +57,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
   const [orders, setOrders] = useState<PlacedOrder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
+  // Last server-API leg of getOrders(): drives the session-expired /
+  // firestore-misconfigured banners below instead of a silent empty list.
+  const [apiDiag, setApiDiag] = useState<OrdersApiDiagnostics>({
+    apiStatus: null,
+    apiSource: null,
+    firestoreConfigured: null,
+  });
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
@@ -91,6 +100,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
     setIsLoading(true);
     const data = await getOrders();
     setOrders(data);
+    setApiDiag(getLastOrdersApiStatus());
     setIsLoading(false);
   };
 
@@ -135,6 +145,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     };
   }, [soundEnabled]);
+
+  // Keep the API diagnostics banner fresh: the 5s poller inside
+  // subscribeToRealtimeOrders re-runs getOrders(), so just re-read the
+  // recorded status (no extra fetch here).
+  useEffect(() => {
+    const diagTimer = window.setInterval(() => {
+      setApiDiag(getLastOrdersApiStatus());
+    }, 10000);
+    return () => clearInterval(diagTimer);
+  }, []);
 
   // Status Change Handler
   const handleStatusChange = async (orderId: string, newStatus: OrderStatus) => {
@@ -414,6 +434,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
           </button>
         </div>
       </header>
+
+      {/* API health banners: never fail with a silent empty list */}
+      {(apiDiag.apiStatus === 'unauthorized' ||
+        apiDiag.apiStatus === 'forbidden' ||
+        apiDiag.apiStatus === 'skipped-no-token') && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+          <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm flex flex-wrap items-center gap-3" dir="rtl">
+            <ShieldAlert className="w-5 h-5 shrink-0" />
+            <span className="font-bold flex-1 min-w-[200px]">
+              انتهت جلسة الإدارة (الرمز مخزن غير صالح — يحدث بعد تغيير كلمة المرور). سجل الدخول مجدداً لرؤية الطلبات.
+            </span>
+            <button
+              onClick={() => {
+                removeAdminToken();
+                if (onLogout) {
+                  onLogout();
+                } else {
+                  onExitDashboard();
+                }
+              }}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-red-500/20 border border-red-500/40 hover:bg-red-500/30 transition"
+            >
+              تسجيل الدخول مجدداً
+            </button>
+          </div>
+        </div>
+      )}
+      {apiDiag.apiStatus === 'ok' && apiDiag.firestoreConfigured === false && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm flex flex-wrap items-center gap-3" dir="rtl">
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            <span className="font-bold flex-1 min-w-[200px]">
+              الخادم لا يقرأ Firestore (مصدر البيانات: {apiDiag.apiSource || 'الذاكرة فقط'}). طلبات الأجهزة الأخرى لن تظهر — أضف FIREBASE_SERVICE_ACCOUNT_JSON في Vercel ثم أعد النشر.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
