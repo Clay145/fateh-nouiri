@@ -226,7 +226,10 @@ async function sendCapiStandardEvent(params: {
 
   const accessToken =
     process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
-  if (!accessToken) return; // silent skip when token is not configured
+  if (!accessToken) {
+    console.warn('[Meta CAPI] No token configured, skipping');
+    return;
+  }
   const pixelId = process.env.META_PIXEL_ID || '28477410788542282';
 
   const userData: Record<string, unknown> = { country: [capiHash('dz')] };
@@ -263,16 +266,23 @@ async function sendCapiStandardEvent(params: {
   };
   if (params.testEventCode) payload.test_event_code = params.testEventCode;
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
   try {
     const res = await fetch(`https://graph.facebook.com/v20.0/${pixelId}/events?access_token=${accessToken}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
     const data = await res.json().catch(() => null);
-    console.log(`[Meta CAPI] ${params.eventName} event_id=${params.eventId} status=${res.status}`, JSON.stringify(data));
+    console.log(`[Meta CAPI] ${params.eventName} ${params.eventId} -> ${res.status}`, JSON.stringify(data));
+    if (!res.ok) console.error('[Meta CAPI] FB Error Body:', data);
   } catch (err: any) {
-    console.error(`[Meta CAPI] ${params.eventName} request failed:`, err?.message || err);
+    console.error(`[Meta CAPI] ${params.eventName} request failed:`, err?.message, 'cause:', err?.cause, 'stack:', err?.stack);
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -283,8 +293,10 @@ const FUNNEL_TO_CAPI: Record<string, CapiStandardName> = {
 };
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
+  const originHeader = req.headers['origin'];
+  const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader || 'https://theoriastore.com';
+  res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
   res.setHeader(
     'Access-Control-Allow-Headers',
@@ -383,12 +395,12 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
       let cookieFbp = cookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
       if (cookieFbp) {
         cookieFbp = cookieFbp.trim().replace(/^["']|["']$/g, '');
-        try { cookieFbp = decodeURIComponent(cookieFbp); } catch {}
+        try { cookieFbp = decodeURIComponent(cookieFbp); } catch { }
       }
       let rawCookieFbc = cookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
       if (rawCookieFbc) {
         rawCookieFbc = rawCookieFbc.trim().replace(/^["']|["']$/g, '');
-        try { rawCookieFbc = decodeURIComponent(rawCookieFbc); } catch {}
+        try { rawCookieFbc = decodeURIComponent(rawCookieFbc); } catch { }
       }
       const rawFbclid = req.query?.fbclid;
       const fbclidVal =
