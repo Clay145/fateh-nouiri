@@ -15,6 +15,9 @@ interface VercelResponse {
   setHeader: (name: string, value: string) => VercelResponse;
 }
 
+import { applyCors } from './_cors';
+import { extractBearerToken, verifyAdminToken } from './_adminAuth';
+
 const META_PIXEL_ID = '28477410788542282';
 
 function hashSha256(val: string): string {
@@ -81,16 +84,12 @@ function sanitizeAndValidateFbc(rawFbc?: string | null, rawFbclid?: string | nul
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
-  );
+  if (applyCors(req, res, 'POST,OPTIONS')) return res;
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+  // Admin only: this endpoint fires real CAPI events on demand.
+  const adminToken = extractBearerToken(req.headers, req.query);
+  if (!adminToken || !verifyAdminToken(adminToken)) {
+    return res.status(401).json({ success: false, error: 'Unauthorized: admin login required.' });
   }
 
   const { testCode, customerName, phone, wilaya, totalPrice } = req.body || {};
@@ -114,9 +113,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     eventId: testEventId,
   };
 
-  const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSbZC1XT8cdCX81jJvmxac27deOQd4s77dZASnegTKykgb95lCjYdWRLc3mvS0zYVtTaUMwLNIHGg1YghynrkaBCergTHujh49rInS6dZCFUfHmXWS59vk2bq58DrbfixVFUA0tqSuZAmgxil6PvMYvhOymwxlrdEB2PIe8taE20wqneO8wZDZD';
-  const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || FALLBACK_CAPI_TOKEN;
-  let metaResult: any = { status: 'simulated_local', message: 'Ready for Meta test' };
+  // Env-only auth: no hardcoded fallback. Without a token the endpoint
+  // returns a simulated payload so connectivity can be tested safely.
+  const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
+  let metaResult: any = accessToken
+    ? { status: 'pending', message: 'Dispatching Meta test event' }
+    : { status: 'simulated_local', message: 'No CAPI token configured (META_CONVERSIONS_API_ACCESS_TOKEN). Returning simulated payload only.' };
 
   if (accessToken) {
     try {

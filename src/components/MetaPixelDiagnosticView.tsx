@@ -61,7 +61,11 @@ export const MetaPixelDiagnosticView: React.FC = () => {
   const fetchMetaStatus = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/meta/status');
+      const adminToken =
+        localStorage.getItem('theoria_admin_token') || sessionStorage.getItem('theoria_admin_token') || '';
+      const res = await fetch('/api/meta/status', {
+        headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {},
+      });
       if (res.ok) {
         const data = await res.json();
         setMetaStatus(data);
@@ -125,9 +129,14 @@ export const MetaPixelDiagnosticView: React.FC = () => {
     setTestResult(null);
 
     try {
+      const adminToken =
+        localStorage.getItem('theoria_admin_token') || sessionStorage.getItem('theoria_admin_token') || '';
       const res = await fetch('/api/meta/test-event', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+        },
         body: JSON.stringify({
           testCode: testCodeInput.trim() || undefined,
           customerName: 'فاطمة الزهراء بوعلام',

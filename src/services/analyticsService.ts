@@ -1,4 +1,4 @@
-import { trackAddToCart, trackInitiateCheckout, trackPurchase, trackPixelEvent, getFbpCookie, getFbcCookie } from '../utils/pixel';
+import { trackAddToCart, trackInitiateCheckout, trackPurchase, trackPixelEvent, trackPageView, getFbpCookie, getFbcCookie, getMetaConversionAmount } from '../utils/pixel';
 
 export type FunnelStep =
   | 'page_view'
@@ -246,6 +246,7 @@ function getMetaTestEventCode(): string | undefined {
       const params = new URLSearchParams(window.location.search);
       return (
         params.get('test_event_code') ||
+        params.get('testEventCode') ||
         sessionStorage.getItem('meta_test_event_code') ||
         undefined
       );
@@ -263,10 +264,12 @@ function postEventToServer(
     selectedPackage?: string;
     totalPrice?: number;
     eventId?: string;
-    metaEventName?: 'ViewContent' | 'AddToCart' | 'InitiateCheckout';
+    metaEventName?: 'ViewContent' | 'AddToCart' | 'InitiateCheckout' | 'PageView' | 'Lead';
     value?: number;
     currency?: string;
     contentName?: string;
+    contentIds?: string[];
+    numItems?: number;
   }
 ) {
   if (typeof window === 'undefined') return;
@@ -285,6 +288,8 @@ function postEventToServer(
     value: extra?.value ?? extra?.totalPrice,
     currency: extra?.currency,
     contentName: extra?.contentName ?? extra?.selectedPackage,
+    contentIds: extra?.contentIds,
+    numItems: extra?.numItems ?? 1,
     testEventCode: getMetaTestEventCode(),
     fbp: getFbpCookie() || undefined,
     fbc: getFbcCookie() || undefined,
@@ -361,8 +366,13 @@ export async function clearAnalytics(): Promise<void> {
       sessionStorage.removeItem('theoria_tracked_eng');
       sessionStorage.removeItem('theoria_tracked_checkout');
       sessionStorage.removeItem('theoria_fired_atc');
+      sessionStorage.removeItem('theoria_fired_lead');
+      sessionStorage.removeItem('theoria_field_touched_fullname');
+      sessionStorage.removeItem('theoria_field_touched_phone');
+      sessionStorage.removeItem('theoria_field_touched_wilaya');
+      sessionStorage.removeItem('theoria_field_touched_address');
       localStorage.removeItem(BACKUP_STORAGE_KEY);
-      const token = localStorage.getItem('theoria_admin_token') || 'theoria2026';
+      const token = localStorage.getItem('theoria_admin_token') || sessionStorage.getItem('theoria_admin_token') || '';
       await fetch('/api/analytics/clear', {
         method: 'POST',
         headers: {
@@ -381,14 +391,21 @@ export async function clearAnalytics(): Promise<void> {
 
 /**
  * Check if the current context is Admin (to prevent admin actions from logging as abandoned customer sessions)
+ * Route-only: a stored admin token must NOT disable customer tracking on store
+ * pages, otherwise any browser that ever logged into #admin silently stops
+ * sending ViewContent/AddToCart/InitiateCheckout (browser + CAPI).
  */
+let adminSuppressLogged = false;
 function isAdminContext(): boolean {
   if (typeof window === 'undefined') return false;
-  return (
+  const suppressed =
     window.location.hash.includes('admin') ||
-    window.location.pathname.includes('/admin') ||
-    !!localStorage.getItem('theoria_admin_token')
-  );
+    window.location.pathname.includes('/admin');
+  if (suppressed && !adminSuppressLogged) {
+    adminSuppressLogged = true;
+    console.info('[Analytics] suppressed: admin view — funnel + Meta standard events disabled on this page only.');
+  }
+  return suppressed;
 }
 
 /**
@@ -504,10 +521,12 @@ function advanceStep(
     selectedPackage?: string;
     totalPrice?: number;
     eventId?: string;
-    metaEventName?: 'ViewContent' | 'AddToCart' | 'InitiateCheckout';
+    metaEventName?: 'ViewContent' | 'AddToCart' | 'InitiateCheckout' | 'PageView' | 'Lead';
     value?: number;
     currency?: string;
     contentName?: string;
+    contentIds?: string[];
+    numItems?: number;
   }
 ) {
   // If in admin mode, do not pollute customer conversion funnel
@@ -567,6 +586,8 @@ function advanceStep(
     value: extra?.value ?? extra?.totalPrice,
     currency: extra?.currency,
     contentName: extra?.contentName ?? extra?.selectedPackage,
+    contentIds: extra?.contentIds,
+    numItems: extra?.numItems ?? 1,
   });
 }
 
@@ -575,7 +596,8 @@ function advanceStep(
 // -------------------------------------------------------------
 
 /**
- * 1. Initial Page View Tracking (funnel only — Meta PageView browser + CAPI removed)
+ * 1. Initial Page View Tracking: funnel count + browser PageView pixel +
+ * matching server CAPI PageView sharing the SAME event_id (dedup to one).
  */
 export function trackPageViewVisitor(): void {
   if (typeof window === 'undefined') return;
@@ -606,7 +628,8 @@ export function trackPageViewVisitor(): void {
     }
 
     saveFunnelStats(stats, true);
-    postEventToServer('page_view');
+    const pvEventId = trackPageView();
+    postEventToServer('page_view', { eventId: pvEventId, metaEventName: 'PageView' });
   }
 }
 
@@ -618,38 +641,54 @@ export function trackContentEngagement(): void {
   if (!sessionStorage.getItem('theoria_tracked_eng')) {
     sessionStorage.setItem('theoria_tracked_eng', 'true');
     const vcEventId = `vc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    // Same converted value/currency as CAPI so browser + server match on more than event_id.
+    const { value: vcValue, currency: vcCurrency } = getMetaConversionAmount(9500);
     trackPixelEvent('ViewContent', {
       content_name: 'جهاز مساج واسترخاء العينين Theoria',
       content_type: 'product',
       content_ids: ['theoria_eye_massager_pro'],
+      value: vcValue,
+      currency: vcCurrency,
+      num_items: 1,
     }, { eventID: vcEventId });
-    advanceStep('content_engaged', undefined, { eventId: vcEventId, metaEventName: 'ViewContent' });
+    advanceStep('content_engaged', undefined, {
+      eventId: vcEventId,
+      metaEventName: 'ViewContent',
+      value: 9500,
+      currency: 'DZD',
+      contentName: 'جهاز مساج واسترخاء العينين Theoria',
+      numItems: 1,
+    });
   }
 }
 
 /**
  * 3. Add to Cart (CTA "اطلب الآن" clicked)
  */
-export function trackAddToCartClick(packageName?: string): void {
+export function trackAddToCartClick(packageName?: string, value?: number, contentIds?: string[]): void {
   if (typeof window === 'undefined' || isAdminContext()) return;
   // Once per session: repeat CTA / package clicks only update the funnel,
   // they must not fire new browser pixel or CAPI events.
   if (!sessionStorage.getItem('theoria_fired_atc')) {
     const atcEventId = `atc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     sessionStorage.setItem('theoria_fired_atc', atcEventId);
+    const rawValue = value || 9500;
     trackAddToCart({
       content_name: packageName || 'جهاز مساج Theoria Pro',
-      value: 9500,
+      value: rawValue,
       currency: 'DZD',
       event_id: atcEventId,
+      content_ids: contentIds,
     });
     advanceStep('add_to_cart', undefined, {
       selectedPackage: packageName,
       eventId: atcEventId,
       metaEventName: 'AddToCart',
-      value: 9500,
+      value: rawValue,
       currency: 'DZD',
       contentName: packageName || 'جهاز مساج Theoria Pro',
+      contentIds,
+      numItems: 1,
     });
     return;
   }
@@ -657,25 +696,32 @@ export function trackAddToCartClick(packageName?: string): void {
 }
 
 /**
- * 4. Initiate Checkout (Reached the Order Form)
+ * 4. Initiate Checkout (First real intent inside the Order Form)
+ * Fires ONLY on genuine purchase intent: first field focus/typing or
+ * package selection inside the form. Mere scrolling/viewing the form
+ * must NOT count as InitiateCheckout.
  */
-export function trackInitiateCheckoutView(): void {
+export function trackInitiateCheckoutView(value?: number, contentIds?: string[]): void {
   if (typeof window === 'undefined' || isAdminContext()) return;
   if (!sessionStorage.getItem('theoria_tracked_checkout')) {
     sessionStorage.setItem('theoria_tracked_checkout', 'true');
     const icEventId = `ic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const rawValue = value || 9500;
     trackInitiateCheckout({
       content_name: 'جهاز مساج Theoria Pro',
-      value: 9500,
+      value: rawValue,
       currency: 'DZD',
       event_id: icEventId,
+      content_ids: contentIds,
     });
     advanceStep('initiate_checkout', undefined, {
       eventId: icEventId,
       metaEventName: 'InitiateCheckout',
-      value: 9500,
+      value: rawValue,
       currency: 'DZD',
       contentName: 'جهاز مساج Theoria Pro',
+      contentIds,
+      numItems: 1,
     });
   }
 }
@@ -688,14 +734,66 @@ export function trackFormOpened(_context?: string): void {
 }
 
 /**
- * 5. Form Interaction (Started typing in an input field)
+ * 5. Form Interaction (first touch of an input field)
+ * Counts once per field per session: the first touch advances to form_started
+ * (single server POST). Later typing/focus on the same field only refreshes
+ * lastActiveField silently — no counter bump, no server POST, no log spam.
  */
+const FIELD_TOUCH_PREFIX = 'theoria_field_touched_';
 export function trackFormFieldFocus(fieldName: 'fullname' | 'phone' | 'wilaya' | 'address'): void {
   if (typeof window === 'undefined' || isAdminContext()) return;
+  // Intent gate: the very first field interaction also counts as InitiateCheckout.
+  // This replaces the old view-based trigger so scrollers are not counted.
+  if (!sessionStorage.getItem('theoria_tracked_checkout')) {
+    trackInitiateCheckoutView();
+  }
+  // Repeat touch of an already-counted field: silent last-active refresh only.
+  try {
+    if (sessionStorage.getItem(FIELD_TOUCH_PREFIX + fieldName)) {
+      const session = getCurrentSession();
+      if (session.lastActiveField !== fieldName) {
+        session.lastActiveField = fieldName;
+        saveCurrentSession(session);
+      }
+      return;
+    }
+    sessionStorage.setItem(FIELD_TOUCH_PREFIX + fieldName, '1');
+  } catch {
+    // sessionStorage unavailable: fall through to counted path
+  }
   const session = getCurrentSession();
   const formStarted = session.furthestStep === 'form_started' || session.furthestStep === 'purchase';
   if (!formStarted) {
     advanceStep('form_started', fieldName);
+    // Mid-funnel algorithm signal: one shared-ID Lead per session on the
+    // very first form interaction (browser pixel + matching server CAPI).
+    try {
+      if (!sessionStorage.getItem('theoria_fired_lead')) {
+        const ldEventId = `ld_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        sessionStorage.setItem('theoria_fired_lead', ldEventId);
+        const { value: ldValue, currency: ldCurrency } = getMetaConversionAmount(9500);
+        trackPixelEvent('Lead', {
+          content_name: 'Checkout Form Started - Theoria',
+          content_type: 'product',
+          content_ids: ['theoria_eye_massager_pro'],
+          value: ldValue,
+          currency: ldCurrency,
+          original_value: 9500,
+          original_currency: 'DZD',
+        }, { eventID: ldEventId });
+        postEventToServer('form_started', {
+          fieldName,
+          eventId: ldEventId,
+          metaEventName: 'Lead',
+          value: 9500,
+          currency: 'DZD',
+          contentName: 'Checkout Form Started - Theoria',
+          numItems: 1,
+        });
+      }
+    } catch {
+      // tracking must never break the form
+    }
   } else {
     advanceStep(session.furthestStep, fieldName);
   }

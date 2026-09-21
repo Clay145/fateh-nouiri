@@ -4,8 +4,6 @@ import { Navbar } from './components/Navbar';
 import { HeroSection } from './components/HeroSection';
 import { ProblemSection } from './components/ProblemSection';
 import { ClinicalProofSection } from './components/ClinicalProofSection';
-import { FeaturesSection } from './components/FeaturesSection';
-import { ReviewsSection } from './components/ReviewsSection';
 import { FaqSection } from './components/FaqSection';
 import { OrderSection } from './components/OrderSection';
 import { Footer } from './components/Footer';
@@ -56,10 +54,13 @@ export default function App() {
     checkAuth();
   }, []);
 
-  // Track visitor page view and content engagement on landing page
+  // Track visitor page view and content engagement on landing page.
+  // ViewContent fires immediately on load (bouncers included) with the same
+  // once-per-session guards; the scroll listener is a backstop for older marks.
   useEffect(() => {
     if (viewMode === 'store') {
       trackPageViewVisitor();
+      trackContentEngagement();
 
       const handleScroll = () => {
         if (window.scrollY > 400) {
@@ -169,19 +170,11 @@ export default function App() {
           soundPlaying={soundPlaying}
         />
 
-        {/* Problem Agitation Section */}
+        {/* Problem Agitation + Honest Comparison */}
         <ProblemSection />
 
-        {/* Scientific Proof & Comparison Graph */}
+        {/* Clinical Graph + 4 Core Mechanisms */}
         <ClinicalProofSection />
-
-        {/* 5 Therapeutic Technologies */}
-        <FeaturesSection
-          onOpenSoundPreview={() => setSoundModalOpen(true)}
-        />
-
-        {/* Real Customer Testimonials (Algerian Social Proof) */}
-        <ReviewsSection />
 
         {/* FAQ Section */}
         <FaqSection />
@@ -193,7 +186,10 @@ export default function App() {
       {/* Footer */}
       <Footer />
 
-      {/* Mobile Sticky Quick Order Bar */}
+      {/* Spacer so the fixed sticky checkout dock never covers content */}
+      <div className="h-24 sm:h-28" aria-hidden="true" />
+
+      {/* Smart Sticky Checkout Dock */}
       <FloatingMobileBar />
 
       {/* Ambient Relaxation Sound Player Modal */}

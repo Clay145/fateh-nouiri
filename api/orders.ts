@@ -1,4 +1,7 @@
 import crypto from 'crypto';
+import { applyCors } from './_cors';
+import { extractBearerToken, verifyAdminToken } from './_adminAuth';
+import { adminDeleteOrder, adminGetOrderByCode, adminListOrders, adminPatchOrder, isAdminDbConfigured } from './_firestoreAdmin';
 
 interface VercelRequest {
   method?: string;
@@ -17,11 +20,17 @@ interface VercelResponse {
 
 declare global {
   var __THEORIA_ORDERS__: any[] | undefined;
+  var __THEORIA_CAPI_DISPATCHED__: Set<string> | undefined;
 }
 
 // In production, start with clean real orders only (no mock data)
 if (!global.__THEORIA_ORDERS__) {
   global.__THEORIA_ORDERS__ = [];
+}
+// Single-server-event enforcement: orderCodes already dispatched on this
+// instance. Claimed synchronously before any await (see POST handler).
+if (!global.__THEORIA_CAPI_DISPATCHED__) {
+  global.__THEORIA_CAPI_DISPATCHED__ = new Set<string>();
 }
 
 const META_PIXEL_ID = '28477410788542282';
@@ -93,22 +102,29 @@ function sanitizeAndValidateFbc(rawFbc?: string | null, rawFbclid?: string | nul
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization, x-meta-test-event-code'
-  );
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+  if (
+    applyCors(
+      req,
+      res,
+      'GET,OPTIONS,PATCH,DELETE,POST,PUT',
+      'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization, x-meta-test-event-code'
+    )
+  ) {
+    return res;
   }
+
+  const requireAdmin = (): boolean => {
+    const token = extractBearerToken(req.headers, req.query);
+    if (token && verifyAdminToken(token)) return true;
+    res.status(401).json({ success: false, error: 'Unauthorized: admin login required.' });
+    return false;
+  };
 
   const { id } = req.query;
 
-  // 1. GET ORDERS / STREAM
+  // 1. GET ORDERS / STREAM (admin only — contains customer PII)
   if (req.method === 'GET') {
+    if (!requireAdmin()) return res;
     if (id === 'stream') {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -119,14 +135,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (id) {
-      const order = (global.__THEORIA_ORDERS__ || []).find((o) => o.id === id || o.orderCode === id);
+      const orderId = Array.isArray(id) ? id[0] : id;
+      const order =
+        (global.__THEORIA_ORDERS__ || []).find((o) => o.id === orderId || o.orderCode === orderId) ||
+        (await adminGetOrderByCode(orderId));
       if (!order) return res.status(404).json({ success: false, error: 'Order not found' });
       return res.status(200).json({ success: true, order });
     }
 
+    // Durable cross-device read: instance memory first, then Firestore.
+    const memoryOrders = global.__THEORIA_ORDERS__ || [];
+    const dbOrders = await adminListOrders(250);
+    const merged = new Map<string, any>();
+    [...dbOrders, ...memoryOrders].forEach((o) => {
+      if (o && (o.id || o.orderCode)) merged.set(o.id || o.orderCode, o);
+    });
     return res.status(200).json({
       success: true,
-      orders: global.__THEORIA_ORDERS__ || [],
+      orders: Array.from(merged.values()),
+      source: dbOrders.length ? 'memory+firestore' : memoryOrders.length ? 'memory' : 'empty',
+      firestoreConfigured: isAdminDbConfigured(),
     });
   }
 
@@ -147,6 +175,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (body.orderCode) {
       const existingByCode = global.__THEORIA_ORDERS__.find((o) => o.orderCode === body.orderCode);
       if (existingByCode) {
+        console.log(`[Order Deduplication] Absorbed by orderCode guard: ${existingByCode.orderCode} (no CAPI refire, capi=${existingByCode.capiStatus || 'n/a'}).`);
+        const dupTestCode = ((req.query.test_event_code as string) || (req.query.testEventCode as string) || (body.test_event_code as string) || (body.testEventCode as string) || (req.headers['x-meta-test-event-code'] as string) || '').trim();
+        const dupSuffix = dupTestCode ? `&test_event_code=${encodeURIComponent(dupTestCode)}` : '';
         return res.status(200).json({
           success: true,
           isDuplicate: true,
@@ -155,7 +186,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           token: existingByCode.fb_token,
           event_id: existingByCode.eventId || `purchase_${existingByCode.orderCode}`,
           fb_sent: existingByCode.fb_sent || 0,
-          redirect_url: `/thank-you?order_id=${encodeURIComponent(existingByCode.orderCode)}&token=${encodeURIComponent(existingByCode.fb_token)}`,
+          redirect_url: `/thank-you?order_id=${encodeURIComponent(existingByCode.orderCode)}&token=${encodeURIComponent(existingByCode.fb_token)}${dupSuffix}`,
         });
       }
     }
@@ -168,7 +199,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     );
 
     if (existingOrder) {
-      console.warn(`[Order Deduplication] Duplicate order detected for phone ${cleanPhone} (existing: ${existingOrder.orderCode}). Returning existing order without duplicate insertion or CAPI fire.`);
+      console.warn(`[Order Deduplication] Absorbed by 60s phone guard: phone ${cleanPhone} (existing: ${existingOrder.orderCode}). Returning existing order without duplicate insertion or CAPI fire.`);
+      const dupTestCode2 = ((req.query.test_event_code as string) || (req.query.testEventCode as string) || (body.test_event_code as string) || (body.testEventCode as string) || (req.headers['x-meta-test-event-code'] as string) || '').trim();
+      const dupSuffix2 = dupTestCode2 ? `&test_event_code=${encodeURIComponent(dupTestCode2)}` : '';
       return res.status(200).json({
         success: true,
         isDuplicate: true,
@@ -177,7 +210,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         token: existingOrder.fb_token,
         event_id: existingOrder.eventId || `purchase_${existingOrder.orderCode}`,
         fb_sent: existingOrder.fb_sent || 0,
-        redirect_url: `/thank-you?order_id=${encodeURIComponent(existingOrder.orderCode)}&token=${encodeURIComponent(existingOrder.fb_token)}`,
+        redirect_url: `/thank-you?order_id=${encodeURIComponent(existingOrder.orderCode)}&token=${encodeURIComponent(existingOrder.fb_token)}${dupSuffix2}`,
       });
     }
 
@@ -187,10 +220,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const fb_sent = 0;
 
     // Production: never send test_event_code unless explicitly passed (no env fallback)
-    const testEventCode = (req.query.test_event_code as string) ||
+    // Accept both snake_case and camelCase aliases plus the test header so the
+    // landing-page ?test_event_code= survives end-to-end (client sends all three).
+    const rawTestCode = (req.query.test_event_code as string) ||
+                          (req.query.testEventCode as string) ||
                           (body.test_event_code as string) ||
+                          (body.testEventCode as string) ||
                           (req.headers['x-meta-test-event-code'] as string) ||
-                          undefined;
+                          '';
+    const testEventCode = rawTestCode.trim() ? rawTestCode.trim() : undefined;
+    const testParamSuffix = testEventCode ? `&test_event_code=${encodeURIComponent(testEventCode)}` : '';
 
     // Cookie fallback for fbp/fbc with strict sanitization and validation:
     const headerFirst = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
@@ -227,6 +266,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       commune: String(body.commune || '').trim(),
       packageTitle: body.packageTitle || 'جهاز مساج Theoria',
       totalPrice: Number(body.totalPrice) || 9500,
+      contentId: body.contentId ? String(body.contentId) : undefined,
       currency: 'DZD',
       date: body.date || new Date().toLocaleDateString('ar-DZ', { year: 'numeric', month: 'long', day: 'numeric' }),
       createdAt: body.createdAt || Date.now(),
@@ -241,12 +281,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       capiStatus: testEventCode ? 'test_mode' : 'pending',
     };
 
-    // Server-side Meta CAPI v20.0 dispatch
-    const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
-    const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSbZC1XT8cdCX81jJvmxac27deOQd4s77dZASnegTKykgb95lCjYdWRLc3mvS0zYVtTaUMwLNIHGg1YghynrkaBCergTHujh49rInS6dZCFUfHmXWS59vk2bq58DrbfixVFUA0tqSuZAmgxil6PvMYvhOymwxlrdEB2PIe8taE20wqneO8wZDZD';
-    const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || FALLBACK_CAPI_TOKEN;
+    // Single-server-event enforcement: claim this orderCode synchronously
+    // (before any await) and persist the order BEFORE the CAPI network call,
+    // so a concurrent retry lands in the duplicate-by-code guard above
+    // instead of firing a second CAPI event with the same event_id.
+    if (!global.__THEORIA_CAPI_DISPATCHED__) global.__THEORIA_CAPI_DISPATCHED__ = new Set<string>();
+    let capiDuplicate = false;
+    if (global.__THEORIA_CAPI_DISPATCHED__.has(orderCode)) {
+      capiDuplicate = true;
+      newOrder.capiStatus = 'deduplicated';
+      console.log(`[Meta CAPI Deduplication] Order "${orderCode}" already dispatched. Suppressed duplicate server call — one server event only.`);
+    } else {
+      global.__THEORIA_CAPI_DISPATCHED__.add(orderCode);
+      if (!global.__THEORIA_ORDERS__) global.__THEORIA_ORDERS__ = [];
+      if (!global.__THEORIA_ORDERS__.some((o) => o.orderCode === orderCode)) {
+        global.__THEORIA_ORDERS__.unshift(newOrder);
+      }
+    }
 
-    if (!accessToken) {
+    // Server-side Meta CAPI v20.0 dispatch (env-only auth, no hardcoded fallback)
+    const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
+    const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
+
+    if (capiDuplicate) {
+      // Already dispatched: order is persisted, nothing to send.
+    } else if (!accessToken) {
       console.error(
         `[Meta CAPI Error] META_CONVERSIONS_API_ACCESS_TOKEN is missing or undefined in Vercel environment variables! Cannot send CAPI Purchase event for order ${orderCode}. Make sure it is added in Vercel Dashboard > Settings > Environment Variables for Preview & Production.`
       );
@@ -271,28 +330,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (resolvedFbc) userData.fbc = resolvedFbc;
 
         // Meta CAPI standard currency conversion: USD is the primary accepted currency for Algerian Ad accounts & fbevents.js
-        const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+        const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'DZD').toUpperCase();
         const effectiveCurrency = metaCurrency === 'DZD' ? 'DZD' : (metaCurrency === 'EUR' ? 'EUR' : 'USD');
         const effectiveValue = effectiveCurrency === 'USD'
           ? Number((newOrder.totalPrice / 135).toFixed(2))
           : (effectiveCurrency === 'EUR' ? Number((newOrder.totalPrice / 145).toFixed(2)) : newOrder.totalPrice);
 
+        const orderContentId = (newOrder as Record<string, unknown>).contentId as string | undefined;
+        const contentIds = [orderContentId || 'theoria_eye_massager_pro'];
         const customData = {
           currency: effectiveCurrency,
           value: effectiveValue,
           order_id: orderCode,
           content_name: newOrder.packageTitle,
+          content_ids: contentIds,
           content_type: 'product',
+          num_items: 1,
           original_currency: 'DZD',
           original_value: newOrder.totalPrice,
           contents: [
             {
-              id: 'theoria_eye_massager_pro',
+              id: contentIds[0],
               quantity: 1,
               item_price: effectiveValue,
             },
           ],
         };
+
+        // event_source_url mirrors the browser's thank-you URL (with test code
+        // when present) — full parity with the browser leg. Canonical host
+        // keeps AEM domain attribution consistent with the ad landing domain.
+        const baseSourceUrl = `https://${req.headers.host || 'theoriastore.com'}/thank-you?order_id=${orderCode}&token=${fb_token}`;
+        const trimmedTestCode = testEventCode ? String(testEventCode).trim() : '';
+        const eventSourceUrl = trimmedTestCode
+          ? `${baseSourceUrl}&test_event_code=${encodeURIComponent(trimmedTestCode)}`
+          : baseSourceUrl;
 
         const capiPayload: Record<string, unknown> = {
           data: [
@@ -300,7 +372,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               event_name: 'Purchase',
               event_time: Math.floor(Date.now() / 1000),
               event_id: eventId,
-              event_source_url: `https://${req.headers.host || 'fateh-nouiri.vercel.app'}/thank-you?order_id=${orderCode}&token=${fb_token}`,
+              event_source_url: eventSourceUrl,
               action_source: 'website',
               user_data: userData,
               custom_data: customData,
@@ -308,28 +380,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ],
         };
 
-        if (testEventCode) {
-          capiPayload.test_event_code = String(testEventCode).trim();
+        if (trimmedTestCode) {
+          capiPayload.test_event_code = trimmedTestCode;
         }
 
         console.log(
           `[Meta CAPI] Dispatching Server Purchase: order=${orderCode}, event_id=${eventId}, test_event_code=${capiPayload.test_event_code || 'none'}, pixel=${effectivePixelId}`
         );
 
-        const metaRes = await fetch(`https://graph.facebook.com/v20.0/${effectivePixelId}/events?access_token=${accessToken}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(capiPayload),
-        });
+        const capiController = new AbortController();
+        const capiTimeout = setTimeout(() => capiController.abort(), 10000);
+        try {
+          const metaRes = await fetch(`https://graph.facebook.com/v20.0/${effectivePixelId}/events?access_token=${accessToken}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(capiPayload),
+            signal: capiController.signal,
+          });
 
-        const metaData = await metaRes.json();
-        console.log(`[Meta CAPI Response] HTTP ${metaRes.status}:`, JSON.stringify(metaData));
+          const metaData = await metaRes.json().catch(() => null);
+          console.log(`[Meta CAPI Response] HTTP ${metaRes.status}:`, JSON.stringify(metaData));
 
-        if (metaRes.ok && metaData.events_received) {
-          console.log(`[Meta CAPI Success] Received ${metaData.events_received} event(s) for order ${orderCode}. event_id: ${eventId}`);
-          newOrder.capiStatus = 'sent';
-        } else {
-          console.error(`[Meta CAPI Error] Meta Graph API returned error:`, JSON.stringify(metaData.error || metaData));
+          if (metaRes.ok && metaData?.events_received) {
+            console.log(`[Meta CAPI Success] Received ${metaData.events_received} event(s) for order ${orderCode}. event_id: ${eventId}`);
+            newOrder.capiStatus = 'sent';
+          } else {
+            console.error(`[Meta CAPI Error] Meta Graph API returned error:`, JSON.stringify(metaData?.error || metaData));
+          }
+        } finally {
+          clearTimeout(capiTimeout);
         }
       } catch (capiErr: any) {
         console.error('[Meta CAPI Request Failed]', capiErr?.message || capiErr);
@@ -337,9 +416,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (!global.__THEORIA_ORDERS__) global.__THEORIA_ORDERS__ = [];
-    global.__THEORIA_ORDERS__.unshift(newOrder);
+    if (!global.__THEORIA_ORDERS__.some((o) => o.orderCode === orderCode)) {
+      global.__THEORIA_ORDERS__.unshift(newOrder);
+    }
 
-    const redirect_url = `/thank-you?order_id=${encodeURIComponent(orderCode)}&token=${encodeURIComponent(fb_token)}`;
+    const redirect_url = `/thank-you?order_id=${encodeURIComponent(orderCode)}&token=${encodeURIComponent(fb_token)}${testParamSuffix}`;
 
     return res.status(201).json({
       success: true,
@@ -359,8 +440,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // 3. PATCH ORDER STATUS OR NOTES
+  // 3. PATCH ORDER STATUS OR NOTES (admin only)
   if (req.method === 'PATCH') {
+    if (!requireAdmin()) return res;
     const targetId = (id as string) || req.body?.id;
     const { status, notes } = req.body || {};
 
@@ -374,14 +456,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (status) global.__THEORIA_ORDERS__[idx].status = status;
     if (notes !== undefined) global.__THEORIA_ORDERS__[idx].notes = notes;
 
+    // Mirror to the durable record (best-effort; memory stays authoritative here).
+    const patch: Record<string, unknown> = {};
+    if (status) patch.status = status;
+    if (notes !== undefined) patch.notes = notes;
+    if (Object.keys(patch).length) {
+      adminPatchOrder(global.__THEORIA_ORDERS__[idx].id || targetId, patch).catch(() => {});
+    }
+
     return res.status(200).json({ success: true, order: global.__THEORIA_ORDERS__[idx] });
   }
 
-  // 4. DELETE ORDER
+  // 4. DELETE ORDER (admin only)
   if (req.method === 'DELETE') {
+    if (!requireAdmin()) return res;
     const targetId = (id as string) || (req.query?.orderId as string);
     if (!global.__THEORIA_ORDERS__) global.__THEORIA_ORDERS__ = [];
     global.__THEORIA_ORDERS__ = global.__THEORIA_ORDERS__.filter((o) => o.id !== targetId && o.orderCode !== targetId);
+    if (targetId) adminDeleteOrder(targetId).catch(() => {});
 
     return res.status(200).json({ success: true, message: 'Order deleted' });
   }

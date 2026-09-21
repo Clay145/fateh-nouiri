@@ -13,6 +13,14 @@
 
 header('Content-Type: text/html; charset=UTF-8');
 
+// Pixel fire ownership: the React SPA ThankYouPage is the single browser source
+// for Purchase (stronger guards: shared event_id, test_event_code, fb_sent +
+// localStorage cross-tab checks). Keep this PHP fire DISABLED on SPA hosting
+// (Node/Vercel) to avoid a divergent second browser event (raw DZD value, no
+// test code, no content_ids). Set to true only for a PHP-only deployment with
+// no SPA serving /thank-you.
+$ENABLE_PHP_PIXEL_FIRE = false;
+
 $order_id = isset($_GET['order_id']) ? trim($_GET['order_id']) : '';
 $token = isset($_GET['token']) ? trim($_GET['token']) : '';
 
@@ -88,7 +96,7 @@ $order_value = $order_data && isset($order_data['totalPrice']) ? (float)$order_d
     </script>
     <!-- End Meta Pixel Code -->
 
-    <?php if ($is_authorized): ?>
+    <?php if ($is_authorized && $ENABLE_PHP_PIXEL_FIRE): ?>
     <!-- إطلاق حدث Purchase مرة واحدة فقط مع Deduplication Guard -->
     <script>
       const EVENT_ID = <?php echo json_encode($event_id); ?>;
@@ -122,6 +130,10 @@ $order_value = $order_data && isset($order_data['totalPrice']) ? (float)$order_d
       } else {
         console.warn('[Meta Deduplication Guard] Purchase event suppressed on reload (already fired in this session).');
       }
+    </script>
+    <?php elseif ($is_authorized && !$ENABLE_PHP_PIXEL_FIRE): ?>
+    <script>
+      console.log('[Meta Pixel] PHP fire disabled by config ($ENABLE_PHP_PIXEL_FIRE=false): the React SPA ThankYouPage owns the browser Purchase event.');
     </script>
     <?php else: ?>
     <script>

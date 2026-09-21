@@ -6,6 +6,13 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
+import {
+  extractBearerToken,
+  isAdminConfigured,
+  issueAdminToken,
+  verifyAdminPassword,
+  verifyAdminToken,
+} from './api/_adminAuth';
 
 interface OrderItem {
   id: string;
@@ -17,6 +24,7 @@ interface OrderItem {
   commune: string;
   packageTitle: string;
   totalPrice: number;
+  contentId?: string;
   date: string;
   createdAt: number;
   status: 'جديد' | 'تم التأكيد' | 'قيد التوصيل' | 'تم التسليم' | 'ملغي';
@@ -29,7 +37,7 @@ interface OrderItem {
   test_event_code?: string;
   fbp?: string;
   fbc?: string;
-  capiStatus?: 'sent' | 'deduplicated' | 'skipped' | 'test_mode';
+  capiStatus?: 'sent' | 'deduplicated' | 'skipped' | 'test_mode' | 'capi_purchase_disabled';
 }
 
 // Meta Conversions API & Pixel Configuration
@@ -147,19 +155,11 @@ function sanitizeAndValidateFbc(rawFbc?: string | null, rawFbclid?: string | nul
     }
   }
 
-  // Fallback: If no valid fbc was passed, but a valid fbclid is present
-  if (rawFbclid && typeof rawFbclid === 'string') {
-    let clean = rawFbclid.trim().replace(/^["']|["']$/g, '');
-    try {
-      clean = decodeURIComponent(clean);
-    } catch {
-      // keep clean
-    }
-    if (isValidFbclid(clean)) {
-      return `fb.1.${Date.now()}.${clean}`;
-    }
-  }
-
+  // IMPORTANT: Do NOT synthesize fbc on the server using Date.now() as the timestamp.
+  // The server cannot know the original ad-click time, so any synthesized fbc will have
+  // a wrong creation timestamp — Meta flags this as a "modified fbclid value" warning.
+  // fbc synthesis is handled client-side in pixel.ts getFbcCookie() where the correct
+  // click timestamp from the URL is available. If no valid fbc arrived, omit entirely.
   // Meta official requirement: if invalid or missing, omit fbc entirely!
   return undefined;
 }
@@ -182,10 +182,14 @@ function calculateMatchScore(userData: Record<string, unknown>): number {
 }
 
 const processedCapiStandardEventIds = new Set<string>();
-const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSbZC1XT8cdCX81jJvmxac27deOQd4s77dZASnegTKykgb95lCjYdWRLc3mvS0zYVtTaUMwLNIHGg1YghynrkaBCergTHujh49rInS6dZCFUfHmXWS59vk2bq58DrbfixVFUA0tqSuZAmgxil6PvMYvhOymwxlrdEB2PIe8taE20wqneO8wZDZD';
+// First-touch guard for funnel field counters: (sessionId|fieldName) pairs already
+// counted, so repeat POSTs only refresh state without counter bumps or log lines.
+const seenFunnelFieldTouches = new Set<string>();
+// CAPI auth is env-only: META_CONVERSIONS_API_ACCESS_TOKEN (or FB_CONVERSIONS_API_TOKEN).
+// No hardcoded fallback — a missing token must fail loudly, never silently use a stale secret.
 
 async function processMetaCapiStandardEvent(params: {
-  eventName: 'ViewContent' | 'AddToCart' | 'InitiateCheckout';
+  eventName: 'ViewContent' | 'AddToCart' | 'InitiateCheckout' | 'PageView' | 'Lead';
   eventId: string;
   value?: number;
   currency?: string;
@@ -210,7 +214,7 @@ async function processMetaCapiStandardEvent(params: {
   if (params.ip) userData.client_ip_address = params.ip;
   if (params.userAgent) userData.client_user_agent = params.userAgent;
 
-  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'DZD').toUpperCase();
   const rawValue = Number(params.value) || 9500;
   const value = metaCurrency === 'DZD'
     ? rawValue
@@ -238,20 +242,28 @@ async function processMetaCapiStandardEvent(params: {
   if (params.testEventCode) payload.test_event_code = params.testEventCode;
 
   const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
-  const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || FALLBACK_CAPI_TOKEN;
+  const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
   if (!accessToken) {
-    console.warn(`[Meta CAPI] Missing access token; skipped ${params.eventName} event_id=${params.eventId}`);
+    console.warn(`[Meta CAPI] Missing access token; skipped ${params.eventName} event_id=${params.eventId}. Set META_CONVERSIONS_API_ACCESS_TOKEN.`);
     return;
   }
 
   try {
-    const response = await fetch(`https://graph.facebook.com/v20.0/${effectivePixelId}/events?access_token=${accessToken}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const result = await response.json();
-    console.log(`[Meta CAPI] ${params.eventName} event_id=${params.eventId} test_event_code=${params.testEventCode || 'none'} status=${response.status}`, JSON.stringify(result));
+    const stdController = new AbortController();
+    const stdTimeout = setTimeout(() => stdController.abort(), 8000);
+    try {
+      const response = await fetch(`https://graph.facebook.com/v20.0/${effectivePixelId}/events?access_token=${accessToken}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: stdController.signal,
+      });
+      const result = await response.json().catch(() => null);
+      console.log(`[Meta CAPI] ${params.eventName} event_id=${params.eventId} test_event_code=${params.testEventCode || 'none'} status=${response.status}`, JSON.stringify(result));
+      if (!response.ok) console.error('[Meta CAPI] FB Error Body:', result);
+    } finally {
+      clearTimeout(stdTimeout);
+    }
   } catch (error: any) {
     console.error(`[Meta CAPI] ${params.eventName} request failed:`, error?.message || error);
   }
@@ -274,9 +286,12 @@ async function processMetaCapiPurchase(
   const orderCode = order.orderCode;
   const canonicalEventId = order.eventId || `purchase_${orderCode}`;
 
-  // 1. DEDUPLICATION GUARD: If this order was already processed for CAPI, block duplicate transmission
-  if (processedCapiOrderCodes.has(orderCode)) {
-    console.log(`[Meta CAPI Deduplication] Order "${orderCode}" already processed. Suppressed duplicate server call.`);
+  // 1. DEDUPLICATION GUARDS (all must pass before any Meta transmission):
+  // (a) in-memory processed set, (b) persisted order record already sent
+  // (covers restarts/replays where the set was cleared but the order survived).
+  const alreadySent = (order as OrderItem & { capiStatus?: string }).capiStatus === 'sent';
+  if (processedCapiOrderCodes.has(orderCode) || alreadySent) {
+    console.log(`[Meta CAPI Deduplication] Order "${orderCode}" already processed (set=${processedCapiOrderCodes.has(orderCode)}, persisted=${alreadySent}). Suppressed duplicate server call — one server event only.`);
     const record: CapiEventRecord = {
       id: `capi_${Date.now()}`,
       eventName: 'Purchase',
@@ -289,7 +304,7 @@ async function processMetaCapiPurchase(
       fbp: clientContext.fbp,
       fbc: clientContext.fbc,
       status: 'duplicate_blocked',
-      responseDetails: 'Suppressed duplicate on server reload / re-post',
+      responseDetails: 'Suppressed duplicate on server reload / re-post / restart-replay',
       timestamp: Date.now(),
       eventMatchScore: 9.3,
     };
@@ -298,7 +313,7 @@ async function processMetaCapiPurchase(
     return { success: true, deduplicated: true, eventId: canonicalEventId, status: 'duplicate_blocked' };
   }
 
-  // Mark as processed immediately
+  // Mark as processed immediately (synchronously, before any await)
   processedCapiOrderCodes.add(orderCode);
 
   const { firstName, lastName } = splitName(order.customerName);
@@ -322,7 +337,7 @@ async function processMetaCapiPurchase(
   if (clientContext.ip) userData.client_ip_address = clientContext.ip;
   if (clientContext.userAgent) userData.client_user_agent = clientContext.userAgent;
 
-  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'DZD').toUpperCase();
   const effectiveCurrency = metaCurrency === 'DZD' ? 'DZD' : (metaCurrency === 'EUR' ? 'EUR' : 'USD');
   const rawPrice = Number(order.totalPrice) || 9500;
   const effectiveValue = effectiveCurrency === 'USD'
@@ -334,17 +349,28 @@ async function processMetaCapiPurchase(
     value: effectiveValue,
     order_id: orderCode,
     content_name: order.packageTitle || 'جهاز مساج واسترخاء العينين Theoria',
+    content_ids: [order.contentId || 'theoria_eye_massager_pro'],
     content_type: 'product',
+    num_items: 1,
     original_currency: 'DZD',
     original_value: rawPrice,
     contents: [
       {
-        id: 'theoria_eye_massager_pro',
+        id: order.contentId || 'theoria_eye_massager_pro',
         quantity: 1,
         item_price: effectiveValue,
       },
     ],
   };
+
+  // event_source_url mirrors the browser's thank-you URL (host + order_id +
+  // token, passed via clientContext.referer), with the test code appended when
+  // present — full parity with the browser leg.
+  const baseSourceUrl = clientContext.referer || `https://theoriastore.com/thank-you?order_id=${orderCode}&token=${order.fb_token || ''}`;
+  const trimmedTestCode = clientContext.testEventCode ? String(clientContext.testEventCode).trim() : '';
+  const eventSourceUrl = trimmedTestCode
+    ? `${baseSourceUrl}${baseSourceUrl.includes('?') ? '&' : '?'}test_event_code=${encodeURIComponent(trimmedTestCode)}`
+    : baseSourceUrl;
 
   const payload: Record<string, unknown> = {
     data: [
@@ -352,7 +378,7 @@ async function processMetaCapiPurchase(
         event_name: 'Purchase',
         event_time: Math.floor(Date.now() / 1000),
         event_id: canonicalEventId,
-        event_source_url: `https://theoriastore.com/thank-you?order_id=${orderCode}&token=${order.fb_token || ''}`,
+        event_source_url: eventSourceUrl,
         action_source: 'website',
         user_data: userData,
         custom_data: customData,
@@ -362,23 +388,21 @@ async function processMetaCapiPurchase(
 
   // In production, real customer orders should never send a test_event_code to Meta
   // unless explicitly requested in the query parameter ?test_event_code= or body (e.g. during manual testing)
-  const testEventCode = clientContext.testEventCode;
-  if (testEventCode) {
-    payload.test_event_code = String(testEventCode).trim();
+  if (trimmedTestCode) {
+    payload.test_event_code = trimmedTestCode;
   }
 
   const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
   const matchScore = calculateMatchScore(userData);
-  const FALLBACK_CAPI_TOKEN = 'EAAhsQrqF1LQBSbZC1XT8cdCX81jJvmxac27deOQd4s77dZASnegTKykgb95lCjYdWRLc3mvS0zYVtTaUMwLNIHGg1YghynrkaBCergTHujh49rInS6dZCFUfHmXWS59vk2bq58DrbfixVFUA0tqSuZAmgxil6PvMYvhOymwxlrdEB2PIe8taE20wqneO8wZDZD';
-  // Use user-provided token directly as reliable valid token or fallback
-  const accessToken = (process.env.META_CONVERSIONS_API_ACCESS_TOKEN && !process.env.META_CONVERSIONS_API_ACCESS_TOKEN.startsWith('EAAhsQrqF1LQBSbaBejwOJlz'))
-    ? process.env.META_CONVERSIONS_API_ACCESS_TOKEN
-    : FALLBACK_CAPI_TOKEN;
+  // Env-only auth: never fall back to a hardcoded secret.
+  const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
 
   let finalStatus: CapiEventRecord['status'] = 'logged_test_mode';
   let responseText = 'Simulated payload prepared with Event Match Quality ' + matchScore + '/10';
 
   if (accessToken) {
+    const purchaseController = new AbortController();
+    const purchaseTimeout = setTimeout(() => purchaseController.abort(), 10000);
     try {
       console.log(
         `[Meta CAPI v20.0] Sending Server Purchase: order=${orderCode}, event_id=${canonicalEventId}, test_event_code=${payload.test_event_code || 'none'}, pixel=${effectivePixelId}`
@@ -388,22 +412,25 @@ async function processMetaCapiPurchase(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        signal: purchaseController.signal,
       });
 
-      const resJson = await response.json();
+      const resJson = await response.json().catch(() => null);
       console.log(`[Meta CAPI Response] Status: ${response.status}`, JSON.stringify(resJson));
 
-      if (response.ok && resJson.events_received) {
+      if (response.ok && resJson?.events_received) {
         finalStatus = 'sent_to_meta';
         responseText = `Success: ${resJson.events_received} event(s) received by Meta CAPI. Deduplication matching active.`;
         console.log(`[Meta CAPI Success] Received ${resJson.events_received} event(s) for order ${orderCode}. event_id: ${canonicalEventId}`);
       } else {
         responseText = `Meta Graph API Notice: ${JSON.stringify(resJson)}`;
-        console.error(`[Meta CAPI Error] Meta API Error for order ${orderCode}:`, JSON.stringify(resJson.error || resJson));
+        console.error(`[Meta CAPI Error] Meta API Error for order ${orderCode}:`, JSON.stringify(resJson?.error || resJson));
       }
     } catch (err: any) {
       console.error('[Meta CAPI Request Failed]', err?.message || err);
       responseText = `CAPI request network status: ${err?.message || 'Offline/Local'}`;
+    } finally {
+      clearTimeout(purchaseTimeout);
     }
   } else {
     console.error(
@@ -658,28 +685,20 @@ async function startServer() {
 
   app.use(express.json());
 
-  // Admin passwords & session validation
-  const VALID_ADMIN_PASSWORDS = ['theoria2026', 'IMAD34', 'imad34', 'admin2026'];
-  if (process.env.ADMIN_SECRET_KEY) {
-    VALID_ADMIN_PASSWORDS.push(process.env.ADMIN_SECRET_KEY);
-  }
-
-  function isValidAdminToken(token: string | undefined | null): boolean {
-    if (!token) return false;
-    const clean = token.trim();
-    if (VALID_ADMIN_PASSWORDS.includes(clean)) return true;
-    if (clean.startsWith('admin_token_')) return true;
-    return false;
-  }
-
-  // Admin authentication middleware helper
+  // Admin passwords & session validation (shared stateless scheme, see api/_adminAuth.ts).
+  // Secret comes ONLY from process.env.ADMIN_SECRET_KEY — fail closed when unset.
+  // No hardcoded passwords, no self-mintable token prefixes.
   function checkAdminAuth(req: Request, res: Response, next: () => void) {
-    const authHeader = req.headers.authorization;
-    const queryToken = req.query.token as string;
-    const provided = (authHeader ? authHeader.replace(/^Bearer\s+/i, '') : '') || queryToken;
+    const provided = extractBearerToken(
+      req.headers as Record<string, string | string[] | undefined>,
+      req.query as Record<string, string | string[] | undefined>
+    );
 
-    if (isValidAdminToken(provided)) {
+    if (provided && verifyAdminToken(provided)) {
       return next();
+    }
+    if (!isAdminConfigured()) {
+      return res.status(503).json({ success: false, error: 'دخول الإدارة غير مُعد على الخادم (ADMIN_SECRET_KEY).' });
     }
     return res.status(401).json({ success: false, error: 'غير مصرح لك. يرجى تسجيل الدخول مجدداً.' });
   }
@@ -691,21 +710,23 @@ async function startServer() {
 
   // Admin login endpoint
   app.post('/api/admin/login', (req: Request, res: Response) => {
-    const { password } = req.body;
-    const clean = (password || '').toString().trim();
-    if (VALID_ADMIN_PASSWORDS.includes(clean)) {
-      const sessionToken = `admin_token_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      return res.json({ success: true, token: sessionToken });
+    if (!isAdminConfigured()) {
+      return res.status(503).json({ success: false, error: 'دخول الإدارة غير مُعد على الخادم (ADMIN_SECRET_KEY).' });
+    }
+    const { password } = req.body || {};
+    if (verifyAdminPassword(password)) {
+      return res.json({ success: true, token: issueAdminToken() });
     }
     return res.status(401).json({ success: false, error: 'كلمة مرور لوحة الإدارة غير صحيحة' });
   });
 
   // Admin verify session endpoint
   app.get('/api/admin/verify', (req: Request, res: Response) => {
-    const authHeader = req.headers.authorization;
-    const queryToken = req.query.token as string;
-    const provided = (authHeader ? authHeader.replace(/^Bearer\s+/i, '') : '') || queryToken;
-    if (isValidAdminToken(provided)) {
+    const provided = extractBearerToken(
+      req.headers as Record<string, string | string[] | undefined>,
+      req.query as Record<string, string | string[] | undefined>
+    );
+    if (provided && verifyAdminToken(provided)) {
       return res.json({ success: true, authenticated: true });
     }
     return res.status(401).json({ success: false, authenticated: false });
@@ -725,7 +746,7 @@ async function startServer() {
     res.flushHeaders?.();
 
     const token = req.query.token as string;
-    if (!isValidAdminToken(token)) {
+    if (!token || !verifyAdminToken(token)) {
       res.write(`data: ${JSON.stringify({ type: 'UNAUTHORIZED', error: 'Authentication required' })}\n\n`);
       return res.end();
     }
@@ -771,6 +792,9 @@ async function startServer() {
     if (body.orderCode) {
       const existingByCode = orders.find((o) => o.orderCode === body.orderCode);
       if (existingByCode) {
+        console.log(`[Order Deduplication] Absorbed by orderCode guard: ${existingByCode.orderCode} (no CAPI refire, capi=${existingByCode.capiStatus || 'n/a'}).`);
+        const dupTestCode = ((req.query.test_event_code as string) || (req.query.testEventCode as string) || (body.test_event_code as string) || (body.testEventCode as string) || (req.headers['x-meta-test-event-code'] as string) || '').trim();
+        const dupSuffix = dupTestCode ? `&test_event_code=${encodeURIComponent(dupTestCode)}` : '';
         return res.status(200).json({
           success: true,
           isDuplicate: true,
@@ -779,7 +803,7 @@ async function startServer() {
           token: existingByCode.fb_token,
           event_id: existingByCode.eventId || `purchase_${existingByCode.orderCode}`,
           fb_sent: existingByCode.fb_sent || 0,
-          redirect_url: `/thank-you?order_id=${encodeURIComponent(existingByCode.orderCode)}&token=${encodeURIComponent(existingByCode.fb_token || '')}`,
+          redirect_url: `/thank-you?order_id=${encodeURIComponent(existingByCode.orderCode)}&token=${encodeURIComponent(existingByCode.fb_token || '')}${dupSuffix}`,
         });
       }
     }
@@ -787,11 +811,13 @@ async function startServer() {
     // Anti-Duplicate Shield: Check if this phone or orderCode was placed within the last 60 seconds
     const existingOrder = orders.find(
       (o) => (o.phone === cleanPhone || (body.orderCode && o.orderCode === body.orderCode)) &&
-             (now - (o.createdAt || 0) < 60000)
+        (now - (o.createdAt || 0) < 60000)
     );
 
     if (existingOrder) {
-      console.warn(`[Order Deduplication] Duplicate order detected for phone ${cleanPhone} (existing: ${existingOrder.orderCode}). Returning existing order without duplicate insertion or CAPI fire.`);
+      console.warn(`[Order Deduplication] Absorbed by 60s phone guard: phone ${cleanPhone} (existing: ${existingOrder.orderCode}). Returning existing order without duplicate insertion or CAPI fire.`);
+      const dupTestCode2 = ((req.query.test_event_code as string) || (req.query.testEventCode as string) || (body.test_event_code as string) || (body.testEventCode as string) || (req.headers['x-meta-test-event-code'] as string) || '').trim();
+      const dupSuffix2 = dupTestCode2 ? `&test_event_code=${encodeURIComponent(dupTestCode2)}` : '';
       return res.status(200).json({
         success: true,
         isDuplicate: true,
@@ -800,7 +826,7 @@ async function startServer() {
         token: existingOrder.fb_token,
         event_id: existingOrder.eventId || `purchase_${existingOrder.orderCode}`,
         fb_sent: existingOrder.fb_sent || 0,
-        redirect_url: `/thank-you?order_id=${encodeURIComponent(`${existingOrder.orderCode || ''}`)}&token=${encodeURIComponent(`${existingOrder.fb_token || ''}`)}`,
+        redirect_url: `/thank-you?order_id=${encodeURIComponent(`${existingOrder.orderCode || ''}`)}&token=${encodeURIComponent(`${existingOrder.fb_token || ''}`)}${dupSuffix2}`,
       });
     }
 
@@ -815,12 +841,12 @@ async function startServer() {
     let cookieFbp = cookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
     if (cookieFbp) {
       cookieFbp = cookieFbp.trim().replace(/^["']|["']$/g, '');
-      try { cookieFbp = decodeURIComponent(cookieFbp); } catch {}
+      try { cookieFbp = decodeURIComponent(cookieFbp); } catch { }
     }
     let rawCookieFbc = cookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
     if (rawCookieFbc) {
       rawCookieFbc = rawCookieFbc.trim().replace(/^["']|["']$/g, '');
-      try { rawCookieFbc = decodeURIComponent(rawCookieFbc); } catch {}
+      try { rawCookieFbc = decodeURIComponent(rawCookieFbc); } catch { }
     }
 
     const rawFbclid = (req.query.fbclid as string) || body.fbclid;
@@ -837,6 +863,7 @@ async function startServer() {
       commune: body.commune || '',
       packageTitle: body.packageTitle || 'جهاز مساج Theoria',
       totalPrice: Number(body.totalPrice) || 9500,
+      contentId: body.contentId ? String(body.contentId) : undefined,
       date: body.date || new Date().toLocaleDateString('ar-DZ', { year: 'numeric', month: 'long', day: 'numeric' }),
       createdAt: Date.now(),
       status: 'جديد',
@@ -866,16 +893,22 @@ async function startServer() {
     funnelStats.lastUpdated = Date.now();
     persistAnalytics();
 
-    // Execute Meta Conversions API (CAPI v20.0) with identical event_id for Deduplication
+    // Server Purchase CAPI (v20.0) with identical event_id for deduplication.
+    // Single-send enforced inside processMetaCapiPurchase (processed-set claim
+    // + persisted capiStatus backstop): one order produces one server event.
     const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
     const userAgent = req.headers['user-agent'] || '';
     const host = req.headers.host || 'theoriastore.com';
     const thankYouUrl = `https://${host}/thank-you?order_id=${encodeURIComponent(orderCode)}&token=${encodeURIComponent(fb_token)}`;
     // Only forward test_event_code if explicitly provided in query, body or header (e.g. from test tool)
-    const testEventCode = (req.query.test_event_code as string) || 
-                          (body.test_event_code as string) || 
-                          (req.headers['x-meta-test-event-code'] as string) || 
-                          undefined;
+    // Accept snake_case + camelCase aliases so landing-page ?test_event_code= survives end-to-end.
+    const rawTestEventCode = (req.query.test_event_code as string) ||
+      (req.query.testEventCode as string) ||
+      (body.test_event_code as string) ||
+      (body.testEventCode as string) ||
+      (req.headers['x-meta-test-event-code'] as string) ||
+      '';
+    const testEventCode = rawTestEventCode.trim() ? rawTestEventCode.trim() : undefined;
 
     try {
       const capiResult = await processMetaCapiPurchase(newOrder, {
@@ -887,15 +920,19 @@ async function startServer() {
         testEventCode,
       });
       newOrder.capiStatus = capiResult.status === 'sent_to_meta' ? 'sent' : capiResult.deduplicated ? 'deduplicated' : 'test_mode';
+      persistOrders();
     } catch (capiErr) {
       console.warn('[Meta CAPI Process Error]', capiErr);
     }
 
     // Broadcast to real-time Admin listeners
+    console.log(
+      `[Order] ${new Date().toLocaleTimeString('en-GB')} order=${orderCode} phone=${String(newOrder.phone || '').slice(0, 2)}***${String(newOrder.phone || '').slice(-2)} wilaya=${newOrder.wilaya} total=${newOrder.totalPrice} capi=${newOrder.capiStatus || 'pending'}`
+    );
     broadcastSse('NEW_ORDER', newOrder);
     broadcastSse('ANALYTICS_UPDATED', funnelStats);
 
-    const redirect_url = `/thank-you?order_id=${encodeURIComponent(orderCode)}&token=${encodeURIComponent(fb_token)}`;
+    const redirect_url = `/thank-you?order_id=${encodeURIComponent(orderCode)}&token=${encodeURIComponent(fb_token)}${testEventCode ? `&test_event_code=${encodeURIComponent(testEventCode)}` : ''}`;
 
     return res.status(201).json({
       success: true,
@@ -948,8 +985,12 @@ async function startServer() {
       });
     }
 
-    // Only provide test_event_code if recorded on order or explicitly passed in request query
-    const testEventCode = order.test_event_code || (req.query.test_event_code as string) || undefined;
+    // Only provide test_event_code if recorded on order or explicitly passed in request query/header
+    const testEventCode = (order.test_event_code as string) ||
+      (req.query.test_event_code as string) ||
+      (req.query.testEventCode as string) ||
+      (req.headers['x-meta-test-event-code'] as string) ||
+      undefined;
 
     return res.json({
       valid: true,
@@ -997,8 +1038,8 @@ async function startServer() {
     });
   });
 
-  // Meta Pixel & Conversions API Status Endpoint
-  app.get('/api/meta/status', (req: Request, res: Response) => {
+  // Meta Pixel & Conversions API Status Endpoint (admin only, PII-stripped)
+  app.get('/api/meta/status', checkAdminAuth, (req: Request, res: Response) => {
     res.json({
       success: true,
       pixelId: META_PIXEL_ID,
@@ -1007,7 +1048,17 @@ async function startServer() {
       hasAccessToken: Boolean(process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN),
       testEventCode: process.env.META_TEST_EVENT_CODE || null,
       processedCapiCount: processedCapiOrderCodes.size,
-      recentEvents: capiEventHistory.slice(0, 30),
+      recentEvents: capiEventHistory.slice(0, 30).map((e) => ({
+        id: e.id,
+        eventName: e.eventName,
+        eventId: e.eventId,
+        orderCode: e.orderCode,
+        totalPrice: e.totalPrice,
+        wilaya: e.wilaya,
+        status: e.status,
+        timestamp: e.timestamp,
+        eventMatchScore: e.eventMatchScore,
+      })),
       deduplicationMechanism: {
         method: 'Shared event_id + event_name',
         eventIdPattern: 'purchase_{ORDER_CODE}',
@@ -1018,8 +1069,8 @@ async function startServer() {
     });
   });
 
-  // Meta Test Event Dispatch (For Events Manager Test Events tool verification)
-  app.post('/api/meta/test-event', async (req: Request, res: Response) => {
+  // Meta Test Event Dispatch (admin only — fires real CAPI test events on demand)
+  app.post('/api/meta/test-event', checkAdminAuth, async (req: Request, res: Response) => {
     const { testCode, customerName, phone, wilaya, totalPrice } = req.body || {};
     const testOrderCode = `TEST-${Math.floor(10000 + Math.random() * 90000)}`;
     const testEventId = `purchase_${testOrderCode}`;
@@ -1183,14 +1234,15 @@ async function startServer() {
 
     // Fallback: older clients send only the funnel `event` + `eventId` without `metaEventName`.
     // Map it so the server CAPI still fires with the SAME event_id as the browser pixel.
-    // Note: page_view never maps to CAPI — PageView tracking was removed entirely.
-    const FUNNEL_TO_CAPI: Record<string, 'ViewContent' | 'AddToCart' | 'InitiateCheckout'> = {
+    // Note: page_view and form_started never auto-map — PageView/Lead CAPI fire
+    // only when the client passes an explicit metaEventName (shared event_id).
+    const FUNNEL_TO_CAPI: Record<string, 'ViewContent' | 'AddToCart' | 'InitiateCheckout' | 'PageView' | 'Lead'> = {
       content_engaged: 'ViewContent',
       add_to_cart: 'AddToCart',
       initiate_checkout: 'InitiateCheckout',
     };
     const resolvedMetaEventName =
-      (metaEventName as 'ViewContent' | 'AddToCart' | 'InitiateCheckout' | undefined) ||
+      (metaEventName as 'ViewContent' | 'AddToCart' | 'InitiateCheckout' | 'PageView' | 'Lead' | undefined) ||
       FUNNEL_TO_CAPI[event];
 
     if (resolvedMetaEventName && eventId) {
@@ -1200,12 +1252,12 @@ async function startServer() {
       let trackCookieFbp = trackCookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
       if (trackCookieFbp) {
         trackCookieFbp = trackCookieFbp.trim().replace(/^["']|["']$/g, '');
-        try { trackCookieFbp = decodeURIComponent(trackCookieFbp); } catch {}
+        try { trackCookieFbp = decodeURIComponent(trackCookieFbp); } catch { }
       }
       let trackRawCookieFbc = trackCookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
       if (trackRawCookieFbc) {
         trackRawCookieFbc = trackRawCookieFbc.trim().replace(/^["']|["']$/g, '');
-        try { trackRawCookieFbc = decodeURIComponent(trackRawCookieFbc); } catch {}
+        try { trackRawCookieFbc = decodeURIComponent(trackRawCookieFbc); } catch { }
       }
 
       const trackFbclid = (req.query.fbclid as string) || (req.body || {}).fbclid;
@@ -1219,7 +1271,7 @@ async function startServer() {
         contentName: contentName ? String(contentName) : undefined,
         contentIds: Array.isArray(contentIds) ? contentIds.map(String) : undefined,
         contentType: contentType ? String(contentType) : undefined,
-        numItems: Number(numItems) || undefined,
+        numItems: Number((req.body || {}).numItems) || Number(numItems) || 1,
         fbp: (fbp ? String(fbp) : undefined) || trackCookieFbp,
         fbc: validatedTrackFbc,
         userAgent: (req.headers['user-agent'] as string) || undefined,
@@ -1227,7 +1279,12 @@ async function startServer() {
         // Prefer the real page URL sent by the client so event_source_url is
         // identical to the browser event's URL.
         referer: (pageUrl ? String(pageUrl) : undefined) || (req.headers['referer'] as string) || undefined,
-        testEventCode: (req.query.test_event_code as string) || (testEventCode ? String(testEventCode) : undefined),
+        testEventCode: (req.query.test_event_code as string) ||
+          (req.query.testEventCode as string) ||
+          (testEventCode ? String(testEventCode) : undefined) ||
+          ((req.body || {}).testEventCode ? String((req.body || {}).testEventCode) : undefined) ||
+          (req.headers['x-meta-test-event-code'] as string) ||
+          undefined,
       }).catch((error) => console.error('[Meta CAPI Standard Event Error]', error));
     }
 
@@ -1272,8 +1329,10 @@ async function startServer() {
     const currWeight = STEP_WEIGHT[session.furthestStep] || 1;
     const newWeight = STEP_WEIGHT[event] || 1;
 
+    let stepAdvanced = false;
     if (newWeight > currWeight) {
       session.furthestStep = event;
+      stepAdvanced = true;
       if (event === 'content_engaged') funnelStats.contentEngaged = (funnelStats.contentEngaged || 0) + 1;
       if (event === 'add_to_cart') funnelStats.clickedAddToCart = (funnelStats.clickedAddToCart || 0) + 1;
       if (event === 'initiate_checkout') funnelStats.reachedCheckoutForm = (funnelStats.reachedCheckoutForm || 0) + 1;
@@ -1286,10 +1345,22 @@ async function startServer() {
 
     const validFieldNames = ['fullname', 'phone', 'wilaya', 'address'] as const;
     const fieldName = validFieldNames.find((name) => name === rawFieldName);
+    // Count each field once per session (first touch). Repeat POSTs from older
+    // clients only refresh last-active state — no counter bump, no log line.
+    let fieldNewlyCounted = false;
     if (fieldName) {
       session.lastActiveField = fieldName;
-      const fieldDropOffs = funnelStats.fieldDropOffs as Record<typeof validFieldNames[number], number>;
-      fieldDropOffs[fieldName] = (fieldDropOffs[fieldName] || 0) + 1;
+      const seenKey = `${sessionId}|${fieldName}`;
+      if (!seenFunnelFieldTouches.has(seenKey)) {
+        seenFunnelFieldTouches.add(seenKey);
+        if (seenFunnelFieldTouches.size > 5000) {
+          const first = seenFunnelFieldTouches.values().next().value;
+          if (first) seenFunnelFieldTouches.delete(first);
+        }
+        const fieldDropOffs = funnelStats.fieldDropOffs as Record<typeof validFieldNames[number], number>;
+        fieldDropOffs[fieldName] = (fieldDropOffs[fieldName] || 0) + 1;
+        fieldNewlyCounted = true;
+      }
     }
 
     if (event === 'validation_failed') {
@@ -1298,6 +1369,13 @@ async function startServer() {
     }
 
     persistAnalytics();
+    // Log discipline: step advances, validation failures and purchases are signal;
+    // repeat field-only touches are noise (client gates them, this is the backstop).
+    if (stepAdvanced || fieldNewlyCounted || event === 'validation_failed' || event === 'purchase') {
+      console.log(
+        `[Funnel] ${new Date(now).toLocaleTimeString('en-GB')} event=${event} session=${sessionId} device=${session.device} source=${session.source} capi=${resolvedMetaEventName || '-'} event_id=${eventId || '-'}`
+      );
+    }
     broadcastSse('ANALYTICS_UPDATED', funnelStats);
 
     return res.json({ success: true, stats: funnelStats });

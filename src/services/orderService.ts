@@ -51,8 +51,10 @@ export function removeAdminToken(): void {
 
 export async function loginAdmin(password: string): Promise<boolean> {
   const cleanPassword = password.trim();
+  if (!cleanPassword) return false;
 
-  // Try API first if backend is running
+  // API-only authentication: no hardcoded passwords, no client-minted tokens.
+  // Fails closed when the backend is unreachable or unconfigured.
   try {
     const res = await fetch('/api/admin/login', {
       method: 'POST',
@@ -67,15 +69,7 @@ export async function loginAdmin(password: string): Promise<boolean> {
       }
     }
   } catch {
-    // Backend API unavailable, fallback below
-  }
-
-  // Fallback for static environments
-  const validPasswords = ['theoria2026', 'IMAD34', 'imad34', 'admin2026'];
-  if (validPasswords.includes(cleanPassword)) {
-    const clientFallbackToken = `admin_token_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    setAdminToken(clientFallbackToken, true);
-    return true;
+    // Backend API unavailable: deny (fail closed), never mint local tokens.
   }
 
   return false;
@@ -85,16 +79,20 @@ export async function verifyAdminSession(): Promise<boolean> {
   const token = getAdminToken();
   if (!token) return false;
 
+  // Server-verified only. Any legacy self-minted token fails closed here.
   try {
     const res = await fetch('/api/admin/verify', {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (res.ok) return true;
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data && data.authenticated) return true;
+    }
   } catch {
-    // Backend unavailable, accept valid client session token
+    // Backend unavailable: deny (fail closed).
   }
 
-  return token.startsWith('admin_token_') || token === 'theoria2026' || token === 'IMAD34';
+  return false;
 }
 
 // In-memory / broadcast channel for multi-tab realtime sync
@@ -306,6 +304,7 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
     commune: String(orderData.commune || '').trim(),
     packageTitle: orderData.packageTitle || 'جهاز مساج Theoria',
     totalPrice: Number(orderData.totalPrice) || 9500,
+    contentId: orderData.contentId || undefined,
     currency: 'DZD',
     date: orderData.date || new Date().toLocaleDateString('ar-DZ', { year: 'numeric', month: 'long', day: 'numeric' }),
     createdAt: orderData.createdAt || Date.now(),

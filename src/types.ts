@@ -7,6 +7,8 @@ export interface PackageOption {
   discountBadge?: string;
   units: number;
   popular?: boolean;
+  // Meta catalog-style identifier for pixel/CAPI content_ids granularity
+  contentId: string;
 }
 
 export interface OrderFormData {
@@ -31,6 +33,7 @@ export interface PlacedOrder {
   commune: string;
   packageTitle: string;
   totalPrice: number;
+  contentId?: string;
   date: string;
   createdAt?: number;
   status?: OrderStatus;
@@ -45,7 +48,7 @@ export interface PlacedOrder {
   fb_sent_at?: number;
   fbp?: string;
   fbc?: string;
-  capiStatus?: 'sent' | 'deduplicated' | 'skipped' | 'test_mode';
+  capiStatus?: 'sent' | 'deduplicated' | 'skipped' | 'test_mode' | 'capi_purchase_disabled';
 }
 
 export interface Wilaya {

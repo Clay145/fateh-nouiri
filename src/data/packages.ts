@@ -8,6 +8,7 @@ export const STORE_PACKAGES: PackageOption[] = [
     price: 9500,
     originalPrice: 14900,
     units: 1,
+    contentId: 'theoria_eye_massager_single',
   },
   {
     id: 'double',
@@ -18,6 +19,7 @@ export const STORE_PACKAGES: PackageOption[] = [
     discountBadge: 'الأكثر توفيراً (وفر 1,500 دج إضافية)',
     units: 2,
     popular: true,
+    contentId: 'theoria_eye_massager_double',
   },
   {
     id: 'triple',
@@ -27,5 +29,6 @@ export const STORE_PACKAGES: PackageOption[] = [
     originalPrice: 44700,
     discountBadge: 'وفر 3,600 دج إضافية',
     units: 3,
+    contentId: 'theoria_eye_massager_triple',
   },
 ];

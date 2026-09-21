@@ -13,22 +13,14 @@ interface VercelResponse {
   setHeader: (name: string, value: string) => VercelResponse;
 }
 
+import { applyCors } from './_cors';
+
 declare global {
   var __THEORIA_ORDERS__: any[] | undefined;
 }
 
-export default function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
-  );
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (applyCors(req, res, 'GET,OPTIONS,POST')) return res;
 
   const order_id = ((Array.isArray(req.query.order_id) ? req.query.order_id[0] : req.query.order_id) || req.body?.order_id || '').trim();
   const token = ((Array.isArray(req.query.token) ? req.query.token[0] : req.query.token) || req.body?.token || '').trim();
@@ -45,6 +37,14 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
   if (order) {
     order.fb_sent = 1;
     order.fb_sent_at = Date.now();
+  }
+
+  // Mirror to the durable record so cross-instance verify sees fb_sent=1.
+  try {
+    const { adminSetFbSent } = await import('./_firestoreAdmin');
+    await adminSetFbSent(order_id);
+  } catch {
+    // ignore — memory update above is authoritative for this instance
   }
 
   return res.status(200).json({

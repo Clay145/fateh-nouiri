@@ -15,6 +15,8 @@ interface VercelResponse {
   setHeader: (name: string, value: string) => VercelResponse;
 }
 
+import { applyCors } from './_cors';
+
 declare global {
   var __THEORIA_ORDERS__: any[] | undefined;
   var __THEORIA_CAPI_DISPATCHED__: Set<string> | undefined;
@@ -27,17 +29,7 @@ function hashSha256(val: string): string {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
-  );
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (applyCors(req, res, 'GET,OPTIONS,POST')) return res;
 
   const order_id = ((Array.isArray(req.query.order_id) ? req.query.order_id[0] : req.query.order_id) || '').trim();
   const token = ((Array.isArray(req.query.token) ? req.query.token[0] : req.query.token) || '').trim();
@@ -50,7 +42,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const orders = global.__THEORIA_ORDERS__ || [];
-  const order = orders.find((o) => o.orderCode === order_id || o.id === order_id);
+  let order = orders.find((o) => o.orderCode === order_id || o.id === order_id);
+
+  // Cross-instance durable lookup: serverless memory is per-instance, so fall
+  // back to Firestore (best-effort) before declaring the order unknown.
+  if (!order) {
+    try {
+      const { adminGetOrderByCode } = await import('./_firestoreAdmin');
+      order = (await adminGetOrderByCode(order_id)) || undefined;
+    } catch {
+      // ignore — fallbackMode below
+    }
+  }
 
   if (order && order.fb_token && order.fb_token !== token) {
     return res.status(403).json({
@@ -61,12 +64,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const canonicalEventId = order?.fb_event_id || order?.eventId || `purchase_${order_id}`;
   const orderValue = Number(order?.totalPrice) || 9500;
-  const testEventCode = (req.query.test_event_code as string) ||
-                        (req.headers['x-meta-test-event-code'] as string) ||
-                        order?.test_event_code ||
-                        process.env.META_TEST_EVENT_CODE ||
-                        process.env.TEST_EVENT_CODE ||
-                        'TEST45919';
+  // Only return a test code when explicitly requested (query/header) or stored
+  // on the order. NEVER fall back to a META_TEST_EVENT_CODE env var here:
+  // if that var were ever set in Production, every real purchase would be
+  // diverted into the Test Events stream and vanish from Ads Manager.
+  const rawQueryCode = (req.query.test_event_code as string) || (req.query.testEventCode as string);
+  const rawHeaderCode = req.headers['x-meta-test-event-code'] as string;
+  const explicitCode = (rawQueryCode || rawHeaderCode || order?.test_event_code || '').trim();
 
   if (!order) {
     return res.status(200).json({
@@ -76,7 +80,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       token,
       event_id: canonicalEventId,
       fb_sent: 0,
-      test_event_code: testEventCode,
+      test_event_code: explicitCode || null,
       value: orderValue,
       currency: 'DZD',
       customerName: 'زبون Theoria',
@@ -89,7 +93,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     order_id: order.orderCode || order_id,
     event_id: canonicalEventId,
     fb_sent: order.fb_sent ?? 0,
-    test_event_code: testEventCode,
+    test_event_code: explicitCode || null,
     value: orderValue,
     currency: 'DZD',
     customerName: order.customerName || 'زبون Theoria',

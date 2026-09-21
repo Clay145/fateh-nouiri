@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2,
   ShieldCheck,
@@ -10,7 +10,7 @@ import {
   Layers,
   Sparkles,
 } from 'lucide-react';
-import { getMetaConversionAmount, trackPurchase, setAdvancedMatching } from '../utils/pixel';
+import { getMetaConversionAmount, trackPurchase, setAdvancedMatching, hasPurchaseFired } from '../utils/pixel';
 
 interface VerificationResult {
   valid: boolean;
@@ -31,6 +31,9 @@ export const ThankYouPage: React.FC = () => {
   const [verification, setVerification] = useState<VerificationResult | null>(null);
   const [firedSuccessfully, setFiredSuccessfully] = useState(false);
   const [sessionSuppressed, setSessionSuppressed] = useState(false);
+  // StrictMode double-mount guard: verify+fire must run once per page lifetime.
+  // Refs survive the simulated unmount/remount, so the second effect run exits.
+  const verifyStartedRef = useRef(false);
 
   useEffect(() => {
     // 1. استخراج order_id و token من رابط الصفحة
@@ -48,14 +51,34 @@ export const ThankYouPage: React.FC = () => {
       return;
     }
 
+    // StrictMode / double-invoke guard (sync, before any await)
+    if (verifyStartedRef.current) return;
+    verifyStartedRef.current = true;
+
+    // Pre-gate: this browser already fired for this order (previous visit/tab).
+    // Skip the verify round-trip entirely — same event_id would only add noise.
+    if (hasPurchaseFired(order_id)) {
+      setVerification({
+        valid: true,
+        order_id,
+        event_id: `purchase_${order_id}`,
+      });
+      setSessionSuppressed(true);
+      setLoading(false);
+      return;
+    }
+
     // 2. التحقق من السيرفر وقاعدة البيانات: هل التوكن سليم؟ وهل fb_sent = 0؟
     async function verifyAndFire() {
       try {
         let data: VerificationResult | null = null;
 
-        // محاولة الاتصال بالخادم أولاً
+        // محاولة الاتصال بالخادم أولاً (نمرر test_event_code حتى لا يضل
+        // حدث المتصفح عن مسار حدث الخادم)
         try {
-          const res = await fetch(`/api/verify-thank-you?order_id=${encodeURIComponent(order_id)}&token=${encodeURIComponent(token)}`);
+          const urlTestCode = params.get('test_event_code') || params.get('testEventCode') || '';
+          const verifyUrl = `/api/verify-thank-you?order_id=${encodeURIComponent(order_id)}&token=${encodeURIComponent(token)}${urlTestCode ? `&test_event_code=${encodeURIComponent(urlTestCode)}` : ''}`;
+          const res = await fetch(verifyUrl);
           const contentType = res.headers.get('content-type') || '';
           if (res.ok && contentType.includes('application/json')) {
             data = await res.json();
@@ -126,6 +149,16 @@ export const ThankYouPage: React.FC = () => {
 
         setVerification(data);
 
+        // Server record says this order's browser event already fired
+        // (fb_sent = 1, e.g. opened thank-you on another device/tab).
+        // Refiring the same event_id only adds a duplicate Test Events row.
+        if (data.valid && (data.fb_sent ?? 0) === 1) {
+          console.warn('[Deduplication Guard] Server fb_sent=1 for order ' + (data.order_id || order_id) + '. Browser fire suppressed.');
+          setSessionSuppressed(true);
+          setLoading(false);
+          return;
+        }
+
         if (data.valid) {
           const ORDER_ID = data.order_id || order_id;
           const EVENT_ID = data.event_id || `purchase_${ORDER_ID}`;
@@ -162,11 +195,13 @@ export const ThankYouPage: React.FC = () => {
 
           // Advanced Matching from the locally stored order (covers direct
           // thank-you landings where the submit-time call never ran in this browser)
+          let storedContentIds: string[] | undefined;
           try {
             const storedRaw = localStorage.getItem(`theoria_order_${ORDER_ID}`);
             if (storedRaw) {
               const stored = JSON.parse(storedRaw);
               const storedName = String(stored.customerName || data.customerName || '').split(/\s+/);
+              if (stored.contentId) storedContentIds = [String(stored.contentId)];
               setAdvancedMatching({
                 email: stored.email || undefined,
                 phone: stored.phone || undefined,
@@ -186,6 +221,7 @@ export const ThankYouPage: React.FC = () => {
             currency: 'DZD',
             content_name: data.packageTitle || 'جهاز مساج واسترخاء العينين Theoria',
             test_event_code: effectiveTestEventCode,
+            content_ids: storedContentIds,
           });
 
           // حفظ في sessionStorage لمنع الإطلاق عند أي Refresh

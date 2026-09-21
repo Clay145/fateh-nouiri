@@ -375,12 +375,13 @@ export function trackPixelEvent(
 /**
  * Calculate compliant currency and value for Meta Pixel
  * (Meta fbevents.js whitelist only includes 45 major currencies like USD, EUR, SAR, AED, etc.)
- * For Algerian stores running Meta Ads, USD is the universal standard for Ad Accounts and Pixel reporting.
+ * The store charges in DZD and the ad account is billed in DZD, so raw
+ * DZD values are reported by default (override with VITE_META_CURRENCY).
  */
 export function getMetaConversionAmount(dzdAmount: number = 9500): { value: number; currency: string } {
   const metaCurrency = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_META_CURRENCY
     ? (import.meta as any).env.VITE_META_CURRENCY
-    : 'USD').toUpperCase();
+    : 'DZD').toUpperCase();
 
   if (metaCurrency === 'DZD') {
     return { value: dzdAmount, currency: 'DZD' };
@@ -392,6 +393,20 @@ export function getMetaConversionAmount(dzdAmount: number = 9500): { value: numb
 }
 
 /**
+ * PageView event (landing entry signal for the algorithm + retargeting pools).
+ * Fired once per session with a shared eventID so the matching server CAPI
+ * PageView deduplicates to a single counted event.
+ * Returns the eventID used so the caller can share it with the server (CAPI deduplication).
+ */
+export function trackPageView(params?: {
+  event_id?: string;
+}): string {
+  const eventId = params?.event_id || `pv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  trackPixelEvent('PageView', undefined, { eventID: eventId });
+  return eventId;
+}
+
+/**
  * AddToCart event (when visitor clicks "اطلب الآن")
  * Returns the eventID used so the caller can share it with the server (CAPI deduplication).
  */
@@ -400,6 +415,7 @@ export function trackAddToCart(params?: {
   value?: number;
   currency?: string;
   event_id?: string;
+  content_ids?: string[];
 }): string {
   const eventId = params?.event_id || `atc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const rawValue = params?.value || 9500;
@@ -408,7 +424,7 @@ export function trackAddToCart(params?: {
   const defaultParams = {
     content_name: params?.content_name || 'جهاز مساج واسترخاء العينين Theoria',
     content_type: 'product',
-    content_ids: ['theoria_eye_massager_pro'],
+    content_ids: params?.content_ids?.length ? params.content_ids : ['theoria_eye_massager_pro'],
     value: metaValue,
     currency: metaCurrency,
     original_value: rawValue,
@@ -421,7 +437,9 @@ export function trackAddToCart(params?: {
 }
 
 /**
- * InitiateCheckout event (when visitor views the order form)
+ * InitiateCheckout event (when visitor shows real purchase intent:
+ * first field interaction or package selection inside the order form).
+ * Mere form views/scrolls must NOT fire this event.
  * Returns the eventID used so the caller can share it with the server (CAPI deduplication).
  */
 export function trackInitiateCheckout(params?: {
@@ -430,6 +448,7 @@ export function trackInitiateCheckout(params?: {
   currency?: string;
   num_items?: number;
   event_id?: string;
+  content_ids?: string[];
 }): string {
   const eventId = params?.event_id || `ic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const rawValue = params?.value || 9500;
@@ -438,7 +457,7 @@ export function trackInitiateCheckout(params?: {
   const defaultParams = {
     content_name: params?.content_name || 'جهاز مساج واسترخاء العينين Theoria',
     content_type: 'product',
-    content_ids: ['theoria_eye_massager_pro'],
+    content_ids: params?.content_ids?.length ? params.content_ids : ['theoria_eye_massager_pro'],
     value: metaValue,
     currency: metaCurrency,
     original_value: rawValue,
@@ -462,6 +481,7 @@ export function trackPurchase(params: {
   order_id: string;
   event_id?: string;
   test_event_code?: string;
+  content_ids?: string[];
 }): boolean {
   const orderCode = params.order_id;
   if (!orderCode) {
@@ -515,7 +535,7 @@ export function trackPurchase(params: {
     currency: metaCurrency,
     content_name: params.content_name || 'جهاز مساج واسترخاء العينين Theoria',
     content_type: 'product',
-    content_ids: ['theoria_eye_massager_pro'],
+    content_ids: params.content_ids?.length ? params.content_ids : ['theoria_eye_massager_pro'],
     num_items: 1,
     order_id: orderCode,
     original_value: rawPrice,

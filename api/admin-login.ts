@@ -1,4 +1,7 @@
 // Vercel Serverless Function compatible types
+import { applyCors } from './_cors';
+import { isAdminConfigured, issueAdminToken, verifyAdminPassword } from './_adminAuth';
+
 interface VercelRequest {
   method?: string;
   query: Record<string, string | string[]>;
@@ -14,26 +17,18 @@ interface VercelResponse {
   setHeader: (name: string, value: string) => VercelResponse;
 }
 
-const VALID_PASSWORDS = ['theoria2026', 'IMAD34', 'imad34', 'admin2026'];
-
 export default function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
-  );
+  if (applyCors(req, res, 'GET,OPTIONS,POST')) return res;
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+  const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+  const { password } = body;
+
+  if (!isAdminConfigured()) {
+    return res.status(503).json({ success: false, error: 'دخول الإدارة غير مُعد على الخادم (ADMIN_SECRET_KEY).' });
   }
 
-  const { password } = req.body || {};
-  const cleanPassword = (password || '').toString().trim();
-
-  if (VALID_PASSWORDS.includes(cleanPassword)) {
-    const token = `admin_token_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  if (verifyAdminPassword(password)) {
+    const token = issueAdminToken();
     return res.status(200).json({ success: true, token });
   }
 

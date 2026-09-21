@@ -122,7 +122,7 @@ export const FunnelAnalyticsView: React.FC = () => {
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
             <ShoppingBag className="w-3 h-3" />
-            فتح الاستمارة ثم تردد (InitiateCheckout)
+            بدأ ملء الاستمارة ثم تردد (InitiateCheckout)
           </span>
         );
       case 'add_to_cart':
@@ -252,7 +252,7 @@ export const FunnelAnalyticsView: React.FC = () => {
         {/* Form Reached / InitiateCheckout */}
         <div className="bg-[#0f172a]/80 backdrop-blur border border-slate-800 rounded-2xl p-4 sm:p-5 relative overflow-hidden">
           <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-bold">وصلوا لاستمارة الشراء</span>
+            <span className="text-xs font-bold">بدأوا ملء الاستمارة (نية شراء)</span>
             <ShoppingBag className="w-5 h-5 text-amber-400" />
           </div>
           <div className="text-2xl sm:text-3xl font-black text-amber-300">
@@ -352,7 +352,7 @@ export const FunnelAnalyticsView: React.FC = () => {
                 <span className="w-5 h-5 rounded-full bg-sky-950/80 border border-sky-600 flex items-center justify-center text-[10px] text-sky-300">
                   3
                 </span>
-                الوصول لاستمارة الطلب (إشارة InitiateCheckout)
+                بدأ ملء استمارة الطلب (إشارة InitiateCheckout)
               </span>
               <span className="font-bold text-sky-300 font-mono">
                 {reachedForm} زائر ({formReachRate}%)

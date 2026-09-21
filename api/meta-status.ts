@@ -13,6 +13,10 @@ interface VercelResponse {
   setHeader: (name: string, value: string) => VercelResponse;
 }
 
+// Admin-only Meta status (contains order metadata — never public).
+import { applyCors } from './_cors';
+import { extractBearerToken, verifyAdminToken } from './_adminAuth';
+
 declare global {
   var __THEORIA_ORDERS__: any[] | undefined;
 }
@@ -21,16 +25,11 @@ const META_PIXEL_ID = '28477410788542282';
 const PURGED_TEST_PIXEL_IDS = ['1699977874052309', '1400263654406240', '1961559868019808'];
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
-  );
+  if (applyCors(req, res, 'GET,OPTIONS')) return res;
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+  const adminToken = extractBearerToken(req.headers, req.query);
+  if (!adminToken || !verifyAdminToken(adminToken)) {
+    return res.status(401).json({ success: false, error: 'Unauthorized: admin login required.' });
   }
 
   const orders = global.__THEORIA_ORDERS__ || [];

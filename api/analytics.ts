@@ -2,6 +2,8 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { applyCors } from './_cors';
+import { extractBearerToken, verifyAdminToken } from './_adminAuth';
 
 interface VercelRequest {
   method?: string;
@@ -120,10 +122,11 @@ const STEP_WEIGHT: Record<string, number> = {
 // --- Meta Conversions API (server events for standard funnel steps) ---
 // Mirrors server.ts processMetaCapiStandardEvent. Fire-and-forget: never blocks the response.
 // Serverless instances are stateless, so this is best-effort on top of Meta event_id dedup.
-type CapiStandardName = 'ViewContent' | 'AddToCart' | 'InitiateCheckout';
+type CapiStandardName = 'ViewContent' | 'AddToCart' | 'InitiateCheckout' | 'PageView' | 'Lead';
 
 declare global {
   var __THEORIA_CAPI_SENT__: Set<string> | undefined;
+  var __THEORIA_FIELD_TOUCHES__: Set<string> | undefined;
 }
 
 function capiHash(val: string): string {
@@ -185,18 +188,11 @@ function sanitizeAndValidateFbc(rawFbc?: string | null, rawFbclid?: string | nul
     }
   }
 
-  // Fallback: If no valid fbc was passed, but a valid fbclid is present
-  if (rawFbclid && typeof rawFbclid === 'string') {
-    let clean = rawFbclid.trim().replace(/^["']|["']$/g, '');
-    try {
-      clean = decodeURIComponent(clean);
-    } catch {
-      // keep clean
-    }
-    if (isValidFbclid(clean)) {
-      return `fb.1.${Date.now()}.${clean}`;
-    }
-  }
+  // IMPORTANT: Do NOT synthesize fbc on the server using Date.now() as the timestamp.
+  // The server cannot know the original ad-click time, so any synthesized fbc will have
+  // a wrong creation timestamp — Meta detects this as a "modified fbclid value" warning.
+  // fbc synthesis is handled client-side in pixel.ts getFbcCookie() where the correct
+  // click timestamp from the URL is available. If no valid fbc arrived, omit entirely.
 
   // Meta official requirement: if invalid or missing, omit fbc entirely!
   return undefined;
@@ -208,6 +204,8 @@ async function sendCapiStandardEvent(params: {
   value?: number;
   currency?: string;
   contentName?: string;
+  contentIds?: string[];
+  numItems?: number;
   fbp?: string;
   fbc?: string;
   userAgent?: string;
@@ -227,7 +225,7 @@ async function sendCapiStandardEvent(params: {
   const accessToken =
     process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
   if (!accessToken) {
-    console.warn('[Meta CAPI] No token configured, skipping');
+    console.warn(`[Meta CAPI] No token configured, skipping ${params.eventName} event_id=${params.eventId} test_event_code=${params.testEventCode || 'none'}. Set META_CONVERSIONS_API_ACCESS_TOKEN in Vercel env.`);
     return;
   }
   const pixelId = process.env.META_PIXEL_ID || '28477410788542282';
@@ -239,7 +237,7 @@ async function sendCapiStandardEvent(params: {
   if (params.ip) userData.client_ip_address = params.ip;
   if (params.userAgent) userData.client_user_agent = params.userAgent;
 
-  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'DZD').toUpperCase();
   const rawValue = Number(params.value) || 9500;
   const value =
     metaCurrency === 'DZD' ? rawValue : Number((rawValue / (metaCurrency === 'EUR' ? 145 : 135)).toFixed(2));
@@ -258,8 +256,9 @@ async function sendCapiStandardEvent(params: {
           value,
           currency,
           content_name: params.contentName || 'جهاز مساج واسترخاء العينين Theoria',
-          content_ids: ['theoria_eye_massager_pro'],
+          content_ids: params.contentIds?.length ? params.contentIds : ['theoria_eye_massager_pro'],
           content_type: 'product',
+          num_items: Number(params.numItems) || 1,
         },
       },
     ],
@@ -293,26 +292,18 @@ const FUNNEL_TO_CAPI: Record<string, CapiStandardName> = {
 };
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
-  const originHeader = req.headers['origin'];
-  const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader || 'https://theoriastore.com';
-  res.setHeader('Access-Control-Allow-Origin', origin);
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
-  );
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (applyCors(req, res, 'GET,OPTIONS,POST')) return res;
 
   let stats = loadStatsFromDisk();
   const queryPath = (req.query?.path || '') as string;
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
 
-  // 1. Reset / Clear Analytics
+  // 1. Reset / Clear Analytics (admin only — destructive)
   if (req.method === 'POST' && (queryPath === 'clear' || body.action === 'clear')) {
+    const adminToken = extractBearerToken(req.headers, req.query);
+    if (!adminToken || !verifyAdminToken(adminToken)) {
+      return res.status(401).json({ success: false, error: 'Unauthorized: admin login required.' });
+    }
     stats = getInitialStats();
     saveStatsToDisk(stats);
     return res.status(200).json({ success: true, stats });
@@ -383,13 +374,14 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Server Conversions API for standard funnel steps (same event_id as browser pixel).
-    // page_view never maps to CAPI. Purchase is handled by api/orders.ts.
+    // page_view / form_started never auto-map: PageView/Lead CAPI fire only on
+    // explicit metaEventName. Purchase is handled by api/orders.ts.
     const resolvedCapiName =
       (body.metaEventName as CapiStandardName | undefined) || FUNNEL_TO_CAPI[event as string];
     const capiEventId = body.eventId ? String(body.eventId) : undefined;
     if (resolvedCapiName && capiEventId) {
       const headerVal = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
-      const queryTestCode = req.query?.test_event_code;
+      const queryTestCode = req.query?.test_event_code ?? req.query?.testEventCode;
       // Cookie fallback: read from request cookies and validate fbc/fbclid strictly
       const cookieHeader = headerVal(req.headers['cookie']) || '';
       let cookieFbp = cookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
@@ -417,6 +409,8 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
           : body.selectedPackage
             ? String(body.selectedPackage)
             : undefined,
+        contentIds: Array.isArray(body.contentIds) ? body.contentIds.map(String) : undefined,
+        numItems: body.numItems !== undefined ? Number(body.numItems) : 1,
         fbp: (body.fbp ? String(body.fbp) : undefined) || cookieFbp,
         fbc: validatedFbc,
         userAgent: headerVal(req.headers['user-agent']),
@@ -431,7 +425,10 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
           headerVal(req.headers['referer']),
         testEventCode:
           (Array.isArray(queryTestCode) ? queryTestCode[0] : queryTestCode) ||
-          (body.testEventCode ? String(body.testEventCode) : undefined),
+          (body.testEventCode ? String(body.testEventCode) : undefined) ||
+          (body.test_event_code ? String(body.test_event_code) : undefined) ||
+          headerVal(req.headers['x-meta-test-event-code']) ||
+          undefined,
       }).catch((err) => console.error('[Meta CAPI Standard Event Error]', err));
     }
 
@@ -491,8 +488,19 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
 
     if (fieldName) {
       session.lastActiveField = fieldName;
-      if (stats.fieldDropOffs[fieldName] !== undefined) {
-        stats.fieldDropOffs[fieldName] = (stats.fieldDropOffs[fieldName] || 0) + 1;
+      // Best-effort first-touch guard (warm instances): count each field once
+      // per session. Client gates repeats; this is the backstop for old clients.
+      if (!global.__THEORIA_FIELD_TOUCHES__) global.__THEORIA_FIELD_TOUCHES__ = new Set<string>();
+      const seenKey = `${sessionId}|${fieldName}`;
+      if (!global.__THEORIA_FIELD_TOUCHES__.has(seenKey)) {
+        global.__THEORIA_FIELD_TOUCHES__.add(seenKey);
+        if (global.__THEORIA_FIELD_TOUCHES__.size > 5000) {
+          const first = global.__THEORIA_FIELD_TOUCHES__.values().next().value;
+          if (first) global.__THEORIA_FIELD_TOUCHES__.delete(first);
+        }
+        if (stats.fieldDropOffs[fieldName] !== undefined) {
+          stats.fieldDropOffs[fieldName] = (stats.fieldDropOffs[fieldName] || 0) + 1;
+        }
       }
     }
 
