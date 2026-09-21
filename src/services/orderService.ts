@@ -80,6 +80,8 @@ export async function verifyAdminSession(): Promise<boolean> {
   if (!token) return false;
 
   // Server-verified only. Any legacy self-minted token fails closed here.
+  // A definitive server rejection purges the stale token so it 401s at most
+  // once; network errors keep the token (backend may just be unreachable).
   try {
     const res = await fetch('/api/admin/verify', {
       headers: { Authorization: `Bearer ${token}` },
@@ -87,9 +89,14 @@ export async function verifyAdminSession(): Promise<boolean> {
     if (res.ok) {
       const data = await res.json().catch(() => null);
       if (data && data.authenticated) return true;
+      removeAdminToken();
+      return false;
+    }
+    if (res.status === 401 || res.status === 403) {
+      removeAdminToken();
     }
   } catch {
-    // Backend unavailable: deny (fail closed).
+    // Backend unavailable: deny (fail closed), but keep the stored token.
   }
 
   return false;

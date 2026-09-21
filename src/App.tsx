@@ -41,8 +41,11 @@ export default function App() {
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [successfulOrder, setSuccessfulOrder] = useState<PlacedOrder | null>(null);
 
-  // Check auth session on startup
+  // Check auth session only when entering the admin route. The storefront and
+  // thank-you views never verify, so regular shoppers send zero requests to
+  // /api/admin/verify (avoids 401 console noise from stale tokens).
   useEffect(() => {
+    if (viewMode !== 'admin') return;
     async function checkAuth() {
       try {
         const valid = await verifyAdminSession();
@@ -52,7 +55,7 @@ export default function App() {
       }
     }
     checkAuth();
-  }, []);
+  }, [viewMode]);
 
   // Track visitor page view and content engagement on landing page.
   // ViewContent fires immediately on load (bouncers included) with the same

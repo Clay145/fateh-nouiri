@@ -721,6 +721,10 @@ async function startServer() {
   });
 
   // Admin verify session endpoint
+  // Intentionally 200 (not 401) on invalid session: this is a session *check*
+  // hit by the client to decide whether to show the admin gate. "No session"
+  // is expected for every shopper, and a 4xx prints "Failed to load resource"
+  // console noise. True protected APIs below still use 401 via checkAdminAuth.
   app.get('/api/admin/verify', (req: Request, res: Response) => {
     const provided = extractBearerToken(
       req.headers as Record<string, string | string[] | undefined>,
@@ -729,7 +733,7 @@ async function startServer() {
     if (provided && verifyAdminToken(provided)) {
       return res.json({ success: true, authenticated: true });
     }
-    return res.status(401).json({ success: false, authenticated: false });
+    return res.status(200).json({ success: false, authenticated: false });
   });
 
   // API Routes

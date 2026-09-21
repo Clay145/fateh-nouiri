@@ -26,5 +26,9 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ success: true, authenticated: true });
   }
 
-  return res.status(401).json({ success: false, authenticated: false });
+  // Intentionally 200 (not 401): this is a session *check*, and "no session"
+  // is an expected state for every storefront visitor. A 4xx makes Chrome
+  // print "Failed to load resource" console noise that looks like an error.
+  // True protected APIs (/api/orders, /api/meta/*) still return 401.
+  return res.status(200).json({ success: false, authenticated: false });
 }
