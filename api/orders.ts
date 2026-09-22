@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { applyCors } from './_cors.js';
 import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
-import { adminDeleteOrder, adminGetOrderByCode, adminListOrders, adminPatchOrder, isAdminDbConfigured } from './_firestoreAdmin.js';
+import { adminCreateOrder, adminDeleteOrder, adminGetOrderByCode, adminListOrders, adminPatchOrder, isAdminDbConfigured } from './_firestoreAdmin.js';
 
 interface VercelRequest {
   method?: string;
@@ -419,6 +419,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!global.__THEORIA_ORDERS__.some((o) => o.orderCode === orderCode)) {
       global.__THEORIA_ORDERS__.unshift(newOrder);
     }
+
+    // Durable server-side persistence: writes the order to Firestore so it is
+    // readable from any serverless instance / device even when the client-side
+    // Firestore write fails. Fire-and-forget when Firestore is not configured.
+    await adminCreateOrder({ ...newOrder, id: newOrder.id });
 
     const redirect_url = `/thank-you?order_id=${encodeURIComponent(orderCode)}&token=${encodeURIComponent(fb_token)}${testParamSuffix}`;
 

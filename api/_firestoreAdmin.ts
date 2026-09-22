@@ -126,6 +126,21 @@ export async function adminDeleteOrder(key: string): Promise<boolean> {
     return false;
   }
 }
+/** Persist a new order to the durable `orders` collection. Best-effort. */
+export async function adminCreateOrder(order: Record<string, unknown>): Promise<boolean> {
+  const adb = getAdminDb();
+  if (!adb || !order) return false;
+  const docId = order.id || order.orderCode;
+  if (!docId) return false;
+  try {
+    await adb.collection('orders').doc(String(docId)).set(order, { merge: true });
+    return true;
+  } catch (err) {
+    console.warn('[FirestoreAdmin] createOrder failed:', (err as Error)?.message || err);
+    return false;
+  }
+}
+
 /** List recent orders (admin dashboard cross-device reads). */
 export async function adminListOrders(limit = 250): Promise<any[]> {
   const adb = getAdminDb();
