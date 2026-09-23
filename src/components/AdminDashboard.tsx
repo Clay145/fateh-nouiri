@@ -89,6 +89,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
   const [tempNoteText, setTempNoteText] = useState('');
   const [copiedPhoneId, setCopiedPhoneId] = useState<string | null>(null);
 
+  // Transient action error (server write failed after optimistic update).
+  const [actionError, setActionError] = useState<string | null>(null);
+  const actionErrorTimer = useRef<number | null>(null);
+  const flashActionError = (msg: string) => {
+    setActionError(msg);
+    if (actionErrorTimer.current) window.clearTimeout(actionErrorTimer.current);
+    actionErrorTimer.current = window.setTimeout(() => setActionError(null), 6000);
+  };
+
   const copyPhoneNumber = (phone: string, id: string) => {
     navigator.clipboard.writeText(phone);
     setCopiedPhoneId(id);
@@ -146,7 +155,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
     };
   }, [soundEnabled]);
 
-  // Keep the API diagnostics banner fresh: the 5s poller inside
+  // Keep the API diagnostics banner fresh: the 15s incremental poller inside
   // subscribeToRealtimeOrders re-runs getOrders(), so just re-read the
   // recorded status (no extra fetch here).
   useEffect(() => {
@@ -156,25 +165,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
     return () => clearInterval(diagTimer);
   }, []);
 
-  // Status Change Handler
+  // Status Change Handler — server API authoritative; revert + toast on failure.
   const handleStatusChange = async (orderId: string, newStatus: OrderStatus) => {
+    const prev = orders.find((o) => o.id === orderId)?.status;
     // optimistic update
-    setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
-    await updateOrderStatus(orderId, newStatus);
+    setOrders((prevList) => prevList.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
+    const ok = await updateOrderStatus(orderId, newStatus);
+    if (!ok) {
+      if (prev) {
+        setOrders((prevList) => prevList.map((o) => (o.id === orderId ? { ...o, status: prev } : o)));
+      }
+      flashActionError('تعذر حفظ الحالة على الخادم — تحقق من الاتصال وأعد المحاولة.');
+    }
   };
 
   // Save Note Handler
   const handleSaveNote = async (orderId: string) => {
-    setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, notes: tempNoteText } : o)));
-    await updateOrderStatus(orderId, undefined, tempNoteText);
+    const prevNote = orders.find((o) => o.id === orderId)?.notes;
+    setOrders((prevList) => prevList.map((o) => (o.id === orderId ? { ...o, notes: tempNoteText } : o)));
+    const ok = await updateOrderStatus(orderId, undefined, tempNoteText);
+    if (!ok) {
+      setOrders((prevList) => prevList.map((o) => (o.id === orderId ? { ...o, notes: prevNote || '' } : o)));
+      flashActionError('تعذر حفظ الملاحظة على الخادم — أعد المحاولة.');
+    }
     setEditingNoteId(null);
   };
 
   // Delete Order Handler
   const handleDeleteOrder = async (orderId: string, customerName: string) => {
     if (window.confirm(`هل أنت متأكد من حذف طلب العميل: ${customerName}؟`)) {
+      const snapshot = orders;
       setOrders((prev) => prev.filter((o) => o.id !== orderId));
-      await deleteOrder(orderId);
+      const ok = await deleteOrder(orderId);
+      if (!ok) {
+        setOrders(snapshot);
+        flashActionError('تعذر حذف الطلب على الخادم — أعد المحاولة.');
+      }
     }
   };
 
@@ -186,13 +212,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
     }
   };
 
-  // Submit Manual Order
+  // Submit Manual Order — only closes on server confirmation (zero-loss).
+  const [manualError, setManualError] = useState<string | null>(null);
   const handleManualOrderSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!manualName.trim() || !manualPhone.trim()) return;
 
     setIsAddingOrder(true);
-    await submitOrder({
+    setManualError(null);
+    const created = await submitOrder({
       customerName: manualName.trim(),
       phone: manualPhone.trim(),
       wilaya: manualWilaya,
@@ -200,6 +228,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
       packageTitle: manualPackage,
       totalPrice: parseInt(manualPrice, 10) || 9500,
       notes: manualNotes.trim() || 'طلب مدخل يدوياً من الإدارة',
+    });
+
+    if (!created.serverConfirmed) {
+      setManualError(created.syncError ? `تعذر الحفظ على الخادم (${created.syncError}). الطلب محفوظ محلياً — أعد المحاولة.` : 'تعذر الحفظ على الخادم. الطلب محفوظ محلياً — أعد المحاولة.');
+      setIsAddingOrder(false);
+      return;
+    }
+    setOrders((prev) => {
+      if (prev.some((o) => o.id === created.id || o.orderCode === created.orderCode)) return prev;
+      return [created, ...prev];
     });
 
     setIsAddingOrder(false);
@@ -468,6 +506,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
             <span className="font-bold flex-1 min-w-[200px]">
               الخادم لا يقرأ Firestore (مصدر البيانات: {apiDiag.apiSource || 'الذاكرة فقط'}). طلبات الأجهزة الأخرى لن تظهر — أضف FIREBASE_SERVICE_ACCOUNT_JSON في Vercel ثم أعد النشر.
             </span>
+          </div>
+        </div>
+      )}
+      {actionError && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+          <div className="p-3 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs font-bold flex items-center gap-2" dir="rtl">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{actionError}</span>
           </div>
         </div>
       )}
@@ -962,6 +1008,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
             </p>
 
             <form onSubmit={handleManualOrderSubmit} className="space-y-4">
+              {manualError && (
+                <div role="alert" className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs font-bold">
+                  {manualError}
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1.5">الاسم واللقب *</label>
                 <input

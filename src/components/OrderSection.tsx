@@ -23,7 +23,11 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
   const [address, setAddress] = useState('');
   const [fieldErrors, setFieldErrors] = useState<{ fullname?: string; phone?: string; wilaya?: string; address?: string }>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const isSubmittingRef = useRef(false);
+  // Idempotency key for this form attempt: reused across retries/double-clicks
+  // so a retry never mints a second orderCode (server dedups by orderCode).
+  const attemptKeysRef = useRef<{ orderCode: string; id: string } | null>(null);
 
   // Broadcast selected package so the sticky dock can sync its total
   // without lifting state (presentation-only bridge, no backend change).
@@ -101,6 +105,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
     }
 
     setFieldErrors({});
+    setSubmitError(null);
 
     const selectedWilayaObj = ALGERIA_WILAYAS.find((w) => w.code === wilayaCode);
     const wilayaName = selectedWilayaObj ? selectedWilayaObj.nameAr : wilayaCode;
@@ -109,7 +114,15 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
     isSubmittingRef.current = true;
     setIsSubmitting(true);
 
-    const generatedOrderCode = `TH-${Math.floor(10000 + Math.random() * 90000)}`;
+    // Reuse idempotency keys across retries of the same form attempt.
+    if (!attemptKeysRef.current) {
+      attemptKeysRef.current = {
+        orderCode: `TH-${Math.floor(10000 + Math.random() * 90000)}`,
+        id: `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      };
+    }
+    const generatedOrderCode = attemptKeysRef.current.orderCode;
+    const generatedId = attemptKeysRef.current.id;
     const eventId = generatePurchaseEventId(generatedOrderCode);
     const fbp = getFbpCookie();
     const fbc = getFbcCookie();
@@ -126,7 +139,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
     });
 
     const placedData: Partial<PlacedOrder> = {
-      id: `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: generatedId,
       orderCode: generatedOrderCode,
       customerName: cleanName,
       phone: cleanPhone,
@@ -148,6 +161,21 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
 
     submitOrder(placedData)
       .then((savedOrder) => {
+        // Zero-loss gate: navigate ONLY when the cloud confirmed the order.
+        // Otherwise stay on the form with an error — the order sits in the
+        // local outbox and auto-retries (no silent thank-you on failure).
+        if (!savedOrder.serverConfirmed) {
+          setSubmitError(
+            savedOrder.syncError
+              ? `تعذر إرسال الطلب إلى السحابة (${savedOrder.syncError}). تم حفظه محلياً وستتم إعادة المحاولة تلقائياً — لا تغلق الصفحة، أو أعد المحاولة.`
+              : 'تعذر إرسال الطلب إلى السحابة. تم حفظه محلياً وستتم إعادة المحاولة تلقائياً — لا تغلق الصفحة، أو أعد المحاولة.'
+          );
+          isSubmittingRef.current = false;
+          setIsSubmitting(false);
+          return;
+        }
+        // Fresh keys for the next distinct order.
+        attemptKeysRef.current = null;
         // Keep isSubmitting true during navigation to avoid any post-click double submission
         onOrderSuccess(savedOrder);
         // Navigate to secure Thank You page with order_id and token
@@ -160,17 +188,15 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
         const thankYouUrl = `/thank-you?order_id=${encodeURIComponent(savedOrder.orderCode)}&token=${encodeURIComponent(token)}${testParam}`;
         window.location.href = thankYouUrl;
       })
-      .catch(() => {
-        // Fallback in case of unexpected promise error
-        const fallbackOrder = placedData as PlacedOrder;
-        onOrderSuccess(fallbackOrder);
-        const fallbackToken = fallbackOrder.fb_token || 'th_token';
-        const testCode = fallbackOrder.test_event_code ||
-          sessionStorage.getItem('meta_test_event_code') ||
-          new URLSearchParams(window.location.search).get('test_event_code') ||
-          '';
-        const testParam = testCode ? `&test_event_code=${encodeURIComponent(testCode)}` : '';
-        window.location.href = `/thank-you?order_id=${encodeURIComponent(fallbackOrder.orderCode)}&token=${encodeURIComponent(fallbackToken)}${testParam}`;
+      .catch((err) => {
+        // Unexpected failure — stay on the form, keep keys for retry.
+        setSubmitError(
+          err instanceof Error && err.message
+            ? `تعذر إرسال الطلب (${err.message}). تم حفظه محلياً — أعد المحاولة دون تغيير البيانات.`
+            : 'تعذر إرسال الطلب. تم حفظه محلياً — أعد المحاولة دون تغيير البيانات.'
+        );
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
       });
   };
 
@@ -390,6 +416,11 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
           </div>
 
           {/* Submit */}
+          {submitError && (
+            <div role="alert" className="p-3.5 rounded-xl bg-[#3d1414]/70 border-2 border-[#ff6b6b]/50 text-[#ffb4b4] text-xs leading-relaxed text-right">
+              {submitError}
+            </div>
+          )}
           <button
             id="submit-order-button"
             type="submit"

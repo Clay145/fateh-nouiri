@@ -153,3 +153,24 @@ export async function adminListOrders(limit = 250): Promise<any[]> {
     return [];
   }
 }
+
+/** Incremental list for dashboard polling: only orders newer than `since` (createdAt ms). */
+export async function adminListOrdersSince(since = 0, limit = 100): Promise<any[]> {
+  const adb = getAdminDb();
+  if (!adb) return [];
+  try {
+    let q: FirebaseFirestore.Query = adb.collection('orders').orderBy('createdAt', 'desc');
+    if (since > 0) {
+      // createdAt is stored as epoch ms number on all new orders.
+      q = q.where('createdAt', '>', since);
+    }
+    const snap = await q.limit(limit).get();
+    return snap.docs.map((d) => ({ ...d.data(), id: d.id }));
+  } catch (err) {
+    // Composite where+orderBy may need an index on older DBs — fall back to
+    // full list + in-memory filter so incremental polling never breaks.
+    console.warn('[FirestoreAdmin] listOrdersSince fallback to listOrders:', (err as Error)?.message || err);
+    const all = await adminListOrders(limit);
+    return since > 0 ? all.filter((o) => Number(o?.createdAt || 0) > since) : all;
+  }
+}

@@ -402,7 +402,8 @@ async function processMetaCapiPurchase(
 
   if (accessToken) {
     const purchaseController = new AbortController();
-    const purchaseTimeout = setTimeout(() => purchaseController.abort(), 10000);
+    // Fast-ack: 6s cap keeps checkout latency low; failure never fails the order.
+    const purchaseTimeout = setTimeout(() => purchaseController.abort(), 6000);
     try {
       console.log(
         `[Meta CAPI v20.0] Sending Server Purchase: order=${orderCode}, event_id=${canonicalEventId}, test_event_code=${payload.test_event_code || 'none'}, pixel=${effectivePixelId}`
@@ -777,8 +778,17 @@ async function startServer() {
   });
 
   // GET all orders - Protected: only authenticated admin can see full customer list
+  // Supports ?since={createdAtMs}&limit={n} for cheap incremental dashboard polling.
   app.get('/api/orders', checkAdminAuth, (req: Request, res: Response) => {
-    res.json({ success: true, orders });
+    const sinceRaw = (req.query.since as string) || '';
+    const limitRaw = (req.query.limit as string) || '';
+    const sinceNum = Number(sinceRaw);
+    const since = Number.isFinite(sinceNum) && sinceNum > 0 ? Math.floor(sinceNum) : 0;
+    const limitParsed = Number(limitRaw);
+    const limit = Number.isFinite(limitParsed) ? Math.min(250, Math.max(1, Math.floor(limitParsed))) : 250;
+    let result = since > 0 ? orders.filter((o) => Number(o?.createdAt || 0) > since) : [...orders];
+    result = result.slice(0, limit);
+    res.json({ success: true, orders: result, source: 'file', firestoreConfigured: false, serverTime: Date.now(), since });
   });
 
   // POST new order / create-order - Open: customer landing page submits their purchase
@@ -789,7 +799,6 @@ async function startServer() {
     }
 
     const cleanPhone = String(body.phone).replace(/\s+/g, '');
-    const now = Date.now();
 
     // orderCode is the durable idempotency key for the Meta Purchase event.
     // A retry of the same order must never create or dispatch another Purchase.
@@ -801,6 +810,7 @@ async function startServer() {
         const dupSuffix = dupTestCode ? `&test_event_code=${encodeURIComponent(dupTestCode)}` : '';
         return res.status(200).json({
           success: true,
+          durable: true,
           isDuplicate: true,
           order: existingByCode,
           order_id: existingByCode.orderCode,
@@ -812,26 +822,13 @@ async function startServer() {
       }
     }
 
-    // Anti-Duplicate Shield: Check if this phone or orderCode was placed within the last 60 seconds
-    const existingOrder = orders.find(
-      (o) => (o.phone === cleanPhone || (body.orderCode && o.orderCode === body.orderCode)) &&
-        (now - (o.createdAt || 0) < 60000)
-    );
-
-    if (existingOrder) {
-      console.warn(`[Order Deduplication] Absorbed by 60s phone guard: phone ${cleanPhone} (existing: ${existingOrder.orderCode}). Returning existing order without duplicate insertion or CAPI fire.`);
-      const dupTestCode2 = ((req.query.test_event_code as string) || (req.query.testEventCode as string) || (body.test_event_code as string) || (body.testEventCode as string) || (req.headers['x-meta-test-event-code'] as string) || '').trim();
-      const dupSuffix2 = dupTestCode2 ? `&test_event_code=${encodeURIComponent(dupTestCode2)}` : '';
-      return res.status(200).json({
-        success: true,
-        isDuplicate: true,
-        order: existingOrder,
-        order_id: existingOrder.orderCode,
-        token: existingOrder.fb_token,
-        event_id: existingOrder.eventId || `purchase_${existingOrder.orderCode}`,
-        fb_sent: existingOrder.fb_sent || 0,
-        redirect_url: `/thank-you?order_id=${encodeURIComponent(`${existingOrder.orderCode || ''}`)}&token=${encodeURIComponent(`${existingOrder.fb_token || ''}`)}${dupSuffix2}`,
-      });
+    // Never-lose policy: same-phone re-submits are accepted as separate orders
+    // (flagged for admin review), never absorbed. The old 60s phone guard is removed.
+    const possibleDuplicateOf = orders.find(
+      (o) => o.phone === cleanPhone && (Date.now() - (o.createdAt || 0) < 60000)
+    )?.orderCode;
+    if (possibleDuplicateOf) {
+      console.warn(`[Order] Same-phone re-order within 60s accepted (never-lose): phone ${cleanPhone} prev=${possibleDuplicateOf}. Flagged, not blocked.`);
     }
 
     const orderCode = body.orderCode || `TH-${Math.floor(10000 + Math.random() * 90000)}`;
@@ -879,8 +876,11 @@ async function startServer() {
       fbp,
       fbc,
       capiStatus: 'test_mode',
-    };
+      ...(possibleDuplicateOf ? { possibleDuplicateOf } : {}),
+    } as OrderItem & { possibleDuplicateOf?: string };
 
+    // Persist-first: file write happens BEFORE any Meta network call, so a
+    // CAPI timeout can never lose the order.
     orders.unshift(newOrder);
     persistOrders();
 
@@ -940,6 +940,7 @@ async function startServer() {
 
     return res.status(201).json({
       success: true,
+      durable: true,
       order: newOrder,
       order_id: orderCode,
       token: fb_token,

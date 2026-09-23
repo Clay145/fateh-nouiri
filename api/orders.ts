@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { applyCors } from './_cors.js';
 import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
-import { adminCreateOrder, adminDeleteOrder, adminGetOrderByCode, adminListOrders, adminPatchOrder, isAdminDbConfigured } from './_firestoreAdmin.js';
+import { adminCreateOrder, adminDeleteOrder, adminGetOrderByCode, adminListOrders, adminListOrdersSince, adminPatchOrder, isAdminDbConfigured } from './_firestoreAdmin.js';
 
 interface VercelRequest {
   method?: string;
@@ -144,17 +144,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Durable cross-device read: instance memory first, then Firestore.
+    // Supports incremental polling via ?since={createdAtMs}&limit={n} so the
+    // dashboard can poll cheaply every 15s instead of refetching 250 rows.
+    const parseSince = (): number => {
+      const raw = Array.isArray(req.query.since) ? req.query.since[0] : req.query.since;
+      const n = Number(raw);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+    };
+    const parseLimit = (): number => {
+      const raw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return 250;
+      return Math.min(250, Math.max(1, Math.floor(n)));
+    };
+    const since = parseSince();
+    const limit = parseLimit();
     const memoryOrders = global.__THEORIA_ORDERS__ || [];
-    const dbOrders = await adminListOrders(250);
+    const dbOrders = since > 0 ? await adminListOrdersSince(since, limit) : await adminListOrders(limit);
     const merged = new Map<string, any>();
     [...dbOrders, ...memoryOrders].forEach((o) => {
       if (o && (o.id || o.orderCode)) merged.set(o.id || o.orderCode, o);
     });
+    let result = Array.from(merged.values());
+    if (since > 0) {
+      result = result.filter((o) => Number(o?.createdAt || 0) > since);
+    }
+    result.sort((a, b) => Number(b?.createdAt || 0) - Number(a?.createdAt || 0));
+    result = result.slice(0, limit);
     return res.status(200).json({
       success: true,
-      orders: Array.from(merged.values()),
+      orders: result,
       source: dbOrders.length ? 'memory+firestore' : memoryOrders.length ? 'memory' : 'empty',
       firestoreConfigured: isAdminDbConfigured(),
+      serverTime: Date.now(),
+      since,
     });
   }
 
@@ -172,9 +195,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // An orderCode is the durable idempotency key for the Meta Purchase event.
     // Never create or dispatch a second order when the client retries the same request.
+    // Durable lookup: memory first, then Firestore (cross-instance retries).
     if (body.orderCode) {
-      const existingByCode = global.__THEORIA_ORDERS__.find((o) => o.orderCode === body.orderCode);
+      const existingByCode =
+        global.__THEORIA_ORDERS__.find((o) => o.orderCode === body.orderCode) ||
+        (await adminGetOrderByCode(String(body.orderCode)));
       if (existingByCode) {
+        if (!global.__THEORIA_ORDERS__.some((o) => o.orderCode === existingByCode.orderCode)) {
+          global.__THEORIA_ORDERS__.unshift(existingByCode);
+        }
         console.log(`[Order Deduplication] Absorbed by orderCode guard: ${existingByCode.orderCode} (no CAPI refire, capi=${existingByCode.capiStatus || 'n/a'}).`);
         const dupTestCode = ((req.query.test_event_code as string) || (req.query.testEventCode as string) || (body.test_event_code as string) || (body.testEventCode as string) || (req.headers['x-meta-test-event-code'] as string) || '').trim();
         const dupSuffix = dupTestCode ? `&test_event_code=${encodeURIComponent(dupTestCode)}` : '';
@@ -191,28 +220,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Anti-Duplicate Shield: Check if this order or phone was submitted in the last 60 seconds
+    // Never-lose policy: NO phone/time blocking. A second submit from the same
+    // phone is accepted as its own order (own orderCode). The previous 60s
+    // phone guard swallowed legitimate household re-orders, so it now only
+    // annotates for admin review instead of absorbing the request.
     const now = Date.now();
-    const existingOrder = global.__THEORIA_ORDERS__.find(
-      (o) => (o.phone === cleanPhone || (body.orderCode && o.orderCode === body.orderCode)) &&
-             (now - (o.createdAt || 0) < 60000)
-    );
-
-    if (existingOrder) {
-      console.warn(`[Order Deduplication] Absorbed by 60s phone guard: phone ${cleanPhone} (existing: ${existingOrder.orderCode}). Returning existing order without duplicate insertion or CAPI fire.`);
-      const dupTestCode2 = ((req.query.test_event_code as string) || (req.query.testEventCode as string) || (body.test_event_code as string) || (body.testEventCode as string) || (req.headers['x-meta-test-event-code'] as string) || '').trim();
-      const dupSuffix2 = dupTestCode2 ? `&test_event_code=${encodeURIComponent(dupTestCode2)}` : '';
-      return res.status(200).json({
-        success: true,
-        isDuplicate: true,
-        order: existingOrder,
-        order_id: existingOrder.orderCode,
-        token: existingOrder.fb_token,
-        event_id: existingOrder.eventId || `purchase_${existingOrder.orderCode}`,
-        fb_sent: existingOrder.fb_sent || 0,
-        redirect_url: `/thank-you?order_id=${encodeURIComponent(existingOrder.orderCode)}&token=${encodeURIComponent(existingOrder.fb_token)}${dupSuffix2}`,
-      });
-    }
+    const possibleDuplicateOf = global.__THEORIA_ORDERS__.find(
+      (o) => o.phone === cleanPhone && (now - (o.createdAt || 0) < 60000)
+    )?.orderCode;
 
     const orderCode = body.orderCode || `TH-${Math.floor(10000 + Math.random() * 90000)}`;
     const eventId = body.eventId || `purchase_${orderCode}`;
@@ -256,7 +271,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       orderFbclid
     );
 
-    const newOrder = {
+    const newOrder: Record<string, any> = {
       id: body.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       orderCode,
       customerName: String(body.customerName).trim(),
@@ -279,12 +294,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ...(resolvedFbp ? { fbp: resolvedFbp } : {}),
       ...(resolvedFbc ? { fbc: resolvedFbc } : {}),
       capiStatus: testEventCode ? 'test_mode' : 'pending',
+      ...(possibleDuplicateOf ? { possibleDuplicateOf } : {}),
     };
+    if (possibleDuplicateOf) {
+      console.warn(`[Order] Same-phone re-order within 60s accepted (never-lose): new=${orderCode} prev=${possibleDuplicateOf}. Flagged, not blocked.`);
+    }
 
-    // Single-server-event enforcement: claim this orderCode synchronously
-    // (before any await) and persist the order BEFORE the CAPI network call,
-    // so a concurrent retry lands in the duplicate-by-code guard above
-    // instead of firing a second CAPI event with the same event_id.
+    // Persist-first: claim idempotency synchronously, insert into memory, then
+    // durable Firestore write BEFORE any Meta network call. A concurrent retry
+    // lands in the duplicate-by-code guard above instead of double-firing.
     if (!global.__THEORIA_CAPI_DISPATCHED__) global.__THEORIA_CAPI_DISPATCHED__ = new Set<string>();
     let capiDuplicate = false;
     if (global.__THEORIA_CAPI_DISPATCHED__.has(orderCode)) {
@@ -299,7 +317,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Server-side Meta CAPI v20.0 dispatch (env-only auth, no hardcoded fallback)
+    // 1) Durable write first — order is safe even if Meta times out next.
+    let durableOk = false;
+    try {
+      durableOk = await adminCreateOrder({ ...newOrder, id: newOrder.id });
+    } catch (e) {
+      console.error('[FirestoreAdmin] createOrder threw:', (e as Error)?.message || e);
+    }
+    if (!durableOk) {
+      console.error(`[Order] Firestore durable write FAILED for ${orderCode} (firestoreConfigured=${isAdminDbConfigured()}). Order held in memory only — dashboard banner must warn.`);
+    }
+
+    // 2) Fast-ack CAPI: short timeout (6s) so slow Meta never holds the
+    // customer checkout hostage. Failure here never fails the order.
     const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
     const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
 
@@ -389,7 +419,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         );
 
         const capiController = new AbortController();
-        const capiTimeout = setTimeout(() => capiController.abort(), 10000);
+        const capiTimeout = setTimeout(() => capiController.abort(), 6000);
         try {
           const metaRes = await fetch(`https://graph.facebook.com/v20.0/${effectivePixelId}/events?access_token=${accessToken}`, {
             method: 'POST',
@@ -413,6 +443,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } catch (capiErr: any) {
         console.error('[Meta CAPI Request Failed]', capiErr?.message || capiErr);
       }
+      // Mirror final CAPI outcome onto the durable record (best-effort) so a
+      // cross-instance GET sees the same capiStatus the creator saw.
+      if (durableOk) {
+        adminPatchOrder(String(newOrder.id), { capiStatus: newOrder.capiStatus }).catch(() => {});
+        const mem = global.__THEORIA_ORDERS__.find((o) => o.orderCode === orderCode);
+        if (mem) mem.capiStatus = newOrder.capiStatus;
+      }
     }
 
     if (!global.__THEORIA_ORDERS__) global.__THEORIA_ORDERS__ = [];
@@ -420,15 +457,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       global.__THEORIA_ORDERS__.unshift(newOrder);
     }
 
-    // Durable server-side persistence: writes the order to Firestore so it is
-    // readable from any serverless instance / device even when the client-side
-    // Firestore write fails. Fire-and-forget when Firestore is not configured.
-    await adminCreateOrder({ ...newOrder, id: newOrder.id });
-
     const redirect_url = `/thank-you?order_id=${encodeURIComponent(orderCode)}&token=${encodeURIComponent(fb_token)}${testParamSuffix}`;
 
     return res.status(201).json({
       success: true,
+      durable: durableOk,
       order: newOrder,
       order_id: orderCode,
       token: fb_token,

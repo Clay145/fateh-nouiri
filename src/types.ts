@@ -49,6 +49,13 @@ export interface PlacedOrder {
   fbp?: string;
   fbc?: string;
   capiStatus?: 'sent' | 'deduplicated' | 'skipped' | 'test_mode' | 'capi_purchase_disabled';
+  // Zero-loss sync metadata (client outbox + server durable confirmation)
+  syncStatus?: 'pending' | 'synced' | 'failed';
+  serverConfirmed?: boolean;
+  durable?: boolean;
+  syncError?: string;
+  attempts?: number;
+  possibleDuplicateOf?: string;
 }
 
 export interface Wilaya {
