@@ -1,6 +1,26 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, doc, getDocFromServer, Firestore } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+import firebaseConfigJson from '../../firebase-applet-config.json';
+
+// Client config resolution order (first set wins per field):
+// 1. VITE_FIREBASE_* env vars (Vercel Dashboard > Settings > Environment
+//    Variables, exposed to the browser at build time). This lets the live
+//    project be fixed without committing new keys.
+// 2. firebase-applet-config.json (local fallback).
+// `firestoreDatabaseId` is NOT overridable — the named DB is canonical.
+const viteEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {};
+const firebaseConfig = {
+  ...firebaseConfigJson,
+  ...(viteEnv.VITE_FIREBASE_API_KEY ? { apiKey: viteEnv.VITE_FIREBASE_API_KEY } : {}),
+  ...(viteEnv.VITE_FIREBASE_AUTH_DOMAIN ? { authDomain: viteEnv.VITE_FIREBASE_AUTH_DOMAIN } : {}),
+  ...(viteEnv.VITE_FIREBASE_PROJECT_ID ? { projectId: viteEnv.VITE_FIREBASE_PROJECT_ID } : {}),
+  ...(viteEnv.VITE_FIREBASE_STORAGE_BUCKET ? { storageBucket: viteEnv.VITE_FIREBASE_STORAGE_BUCKET } : {}),
+  ...(viteEnv.VITE_FIREBASE_MESSAGING_SENDER_ID
+    ? { messagingSenderId: viteEnv.VITE_FIREBASE_MESSAGING_SENDER_ID }
+    : {}),
+  ...(viteEnv.VITE_FIREBASE_APP_ID ? { appId: viteEnv.VITE_FIREBASE_APP_ID } : {}),
+  ...(viteEnv.VITE_FIREBASE_MEASUREMENT_ID ? { measurementId: viteEnv.VITE_FIREBASE_MEASUREMENT_ID } : {}),
+};
 
 // Canonical backend — must match api/_firestoreAdmin.ts (server). Client and
 // server must hit the same project + database or checkout writes and admin
