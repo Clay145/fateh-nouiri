@@ -7,7 +7,7 @@ import firebaseConfigJson from '../../firebase-applet-config.json';
 //    Variables, exposed to the browser at build time). This lets the live
 //    project be fixed without committing new keys.
 // 2. firebase-applet-config.json (local fallback).
-// `firestoreDatabaseId` is NOT overridable — the named DB is canonical.
+// `firestoreDatabaseId` is NOT overridable — the (default) DB is canonical.
 const viteEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {};
 const firebaseConfig = {
   ...firebaseConfigJson,
@@ -26,7 +26,7 @@ const firebaseConfig = {
 // server must hit the same project + database or checkout writes and admin
 // reads silently split across projects.
 export const CANONICAL_PROJECT_ID = 'theoria-store-24aa3';
-export const CANONICAL_DATABASE_ID = 'ai-studio-theoria-c8e9318c-768a-45a3-a424-f43b64f7ef3c';
+export const CANONICAL_DATABASE_ID = '(default)';
 
 const cfgProjectId = (firebaseConfig as { projectId?: string }).projectId;
 const cfgDatabaseId = (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId;
@@ -40,7 +40,7 @@ if (cfgProjectId && cfgProjectId !== CANONICAL_PROJECT_ID) {
 if (cfgDatabaseId && cfgDatabaseId !== CANONICAL_DATABASE_ID) {
   console.error(
     `[Firebase] Client firestoreDatabaseId="${cfgDatabaseId}" but canonical="${CANONICAL_DATABASE_ID}". ` +
-      `Unset FIRESTORE_DATABASE_ID / fix firebase-applet-config.json — orders do not live in "(default)".`
+      `Fix firebase-applet-config.json — orders live in "(default)".`
   );
 }
 
@@ -63,7 +63,19 @@ export async function testFirestoreConnection(): Promise<boolean> {
       console.warn('Firestore is currently offline, using offline cache');
       return false;
     }
-    // Any permission or not-found error means connection reached Firestore server successfully
+    if (/database .* not found|NOT_FOUND/i.test(errorMsg)) {
+      // The database id does not resolve through the Firestore API in this
+      // project — NOT a connectivity problem. Log once, loudly: check the
+      // DB exists in Firestore Native mode, the Cloud Firestore API is
+      // enabled, and the project switcher is on the right project.
+      console.error(
+        `[Firebase] Database "${cfgDatabaseId || '(default)'}" not found in project "${cfgProjectId}". ` +
+          `Verify: 1) Firebase console > ${cfgProjectId} > Firestore Database lists this id in Firestore Native mode ` +
+          `(Datastore-mode DBs 404 every query). 2) Cloud Firestore API enabled. 3) Correct project selected.`
+      );
+      return false;
+    }
+    // Permission-denied means we reached the server (rules locked down) — fine.
     return true;
   }
 }

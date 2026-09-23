@@ -1,12 +1,12 @@
 {
-  "projectId": "charged-flux-nghtt",
-  "appId": "1:1070824398913:web:d51c24bd4706670673a6c0",
-  "apiKey": "AIzaSyCCJmPLGRFby4t8w2ym04-4skibXUyJsKE",
-  "authDomain": "charged-flux-nghtt.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-theoria-c8e9318c-768a-45a3-a424-f43b64f7ef3c",
-  "storageBucket": "charged-flux-nghtt.firebasestorage.app",
-  "messagingSenderId": "1070824398913",
-  "measurementId": "",
-  "oAuthClientId": "1070824398913-guqaddue450kdc8indt3fg8qei8tp0m5.apps.googleusercontent.com",
+  "projectId": "theoria-store-24aa3",
+  "appId": "1:57962299316:web:e91bec3172cd183a553ce1",
+  "apiKey": "AIzaSyCltkuWkdo--DQzRPYV4f12ylslJrO4X_A",
+  "authDomain": "theoria-store-24aa3.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "theoria-store-24aa3.firebasestorage.app",
+  "messagingSenderId": "57962299316",
+  "measurementId": "G-KGP4ZPSLYW",
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }

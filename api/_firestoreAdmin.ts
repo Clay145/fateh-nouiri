@@ -8,23 +8,26 @@ import { Firestore, getFirestore } from 'firebase-admin/firestore';
  *
  * Canonical backend (unified client+server):
  * - project: theoria-store-24aa3
- * - database: ai-studio-theoria-c8e9318c-768a-45a3-a424-f43b64f7ef3c
+ * - database: (default)
+ *   (The AI-Studio-provisioned named DB id is not resolvable through the
+ *   Firestore API in this project on either SDK — canonicalized on
+ *   `(default)`, which probes reachable.)
  *
  * Credentials (any one of):
  * - FIREBASE_SERVICE_ACCOUNT_JSON: full service-account JSON (preferred,
  *   its `project_id` must be theoria-store-24aa3)
  * - FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY
- * Optional: FIRESTORE_DATABASE_ID (defaults to the canonical named database;
- * never set it to `(default)` — orders do not live there).
+ * Optional: FIRESTORE_DATABASE_ID (defaults to `(default)`; leave unset
+ * unless you intentionally point at another database).
  *
  * All helpers fail soft (null/false/[]) when unconfigured so endpoints can
  * fall back to in-memory state with a clear log line. There is deliberately
- * NO fallback to the `(default)` database: silently reading another (usually
- * empty) DB masked the 5 NOT_FOUND misconfiguration and split reads from
- * writes. Misconfig must fail loud via logs + getFirestoreDiagnostics().
+ * NO cross-database fallback: silently reading another DB masked the
+ * 5 NOT_FOUND misconfiguration and split reads from writes.
+ * Misconfig must fail loud via logs + getFirestoreDiagnostics().
  */
 
-const DEFAULT_DATABASE_ID = 'ai-studio-theoria-c8e9318c-768a-45a3-a424-f43b64f7ef3c';
+const DEFAULT_DATABASE_ID = '(default)';
 const EXPECTED_PROJECT_ID = 'theoria-store-24aa3';
 
 let db: Firestore | null = null;
@@ -117,10 +120,10 @@ function recordError(op: string, err: any) {
     console.warn(
       `[FirestoreAdmin] NOT_FOUND on lookup ${requestResourcePath()}. ` +
         `Canonical backend is project="${EXPECTED_PROJECT_ID}" database="${DEFAULT_DATABASE_ID}". ` +
-        `Fix: 1) Firebase console > ${EXPECTED_PROJECT_ID} > Firestore Database — the named DB must exist ` +
-        `in Firestore Native mode (a Datastore-mode DB 404s every Firestore query and can't be converted). ` +
+        `Fix: 1) Firebase console > ${EXPECTED_PROJECT_ID} > Firestore Database — the (default) DB must exist ` +
+        `in Firestore Native mode. ` +
         `2) Vercel FIREBASE_SERVICE_ACCOUNT_JSON project_id must be "${EXPECTED_PROJECT_ID}" and the key must not be deleted. ` +
-        `3) FIRESTORE_DATABASE_ID must be unset or exactly "${DEFAULT_DATABASE_ID}" (no whitespace, never "(default)"). ` +
+        `3) FIRESTORE_DATABASE_ID must be unset or exactly "${DEFAULT_DATABASE_ID}" (no whitespace). ` +
         `4) Enable Cloud Firestore API on ${EXPECTED_PROJECT_ID} + grant the service account Cloud Datastore User.`
     );
   }
