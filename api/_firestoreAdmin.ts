@@ -32,11 +32,16 @@ let initAttempted = false;
 let initLogged = false;
 let effectiveProjectId = '';
 let effectiveDatabaseId = '';
+let effectiveServiceAccount = '';
 let lastErrorCode: string | number | null = null;
 let lastErrorMessage: string | null = null;
 let lastErrorOp: string | null = null;
 let lastNotFoundHintAt = 0;
 const NOT_FOUND_HINT_THROTTLE_MS = 60_000;
+// One-shot reachability probe state (see probeDatabaseReachability below).
+let probeStarted = false;
+let dbProbeStatus: 'unprobed' | 'reachable' | 'not_found' | 'denied' | 'error' = 'unprobed';
+let dbProbeMessage: string | null = null;
 
 function getErrorCode(err: any): string | number | null {
   if (err == null) return null;
@@ -53,17 +58,47 @@ function isNotFoundError(err: any): boolean {
   return msg.includes('NOT_FOUND') || msg.includes('DATABASE DOES NOT EXIST');
 }
 
+function requestResourcePath(): string {
+  const p = effectiveProjectId || 'unknown-project';
+  const d = effectiveDatabaseId || DEFAULT_DATABASE_ID;
+  return `projects/${p}/databases/${d}/documents/orders`;
+}
+
+function safeJson(v: unknown, maxLen = 500): string | null {
+  if (v === undefined || v === null || v === '') return null;
+  try {
+    const s = typeof v === 'string' ? v : JSON.stringify(v);
+    return s.length > maxLen ? s.slice(0, maxLen) + '…' : s;
+  } catch {
+    return String(v).slice(0, maxLen);
+  }
+}
+
 function formatFirestoreError(err: any): string {
   const code = getErrorCode(err);
-  const details =
-    (err as any)?.details || (err as any)?.errorInfo?.metadata || (err as any)?.reason || '';
   const message = (err as Error)?.message || String(err);
+  // gRPC errors carry the looked-up resource in assorted fields — surface all
+  // of them because `message` alone is often just the bare "5 NOT_FOUND:".
+  const meta =
+    (err as any)?.metadata ||
+    (err as any)?.errorInfo?.metadata ||
+    (err as any)?.error?.errorInfo?.metadata;
+  const details =
+    (err as any)?.details ||
+    (err as any)?.errorInfo ||
+    (err as any)?.reason ||
+    (err as any)?.domain;
+  const statusDetails = Array.isArray((err as any)?.statusDetails)
+    ? (err as any).statusDetails.map((s: any) => s?.type || s?.reason || JSON.stringify(s)).join(';')
+    : null;
   const parts = [
     code !== null ? `code=${code}` : null,
-    `project=${effectiveProjectId || 'unknown'}`,
-    `database=${effectiveDatabaseId || 'unknown'}`,
+    `lookup=${requestResourcePath()}`,
+    effectiveServiceAccount ? `sa=${effectiveServiceAccount}` : null,
     `msg=${message}`,
-    details ? `details=${typeof details === 'string' ? details : JSON.stringify(details)}` : null,
+    safeJson(meta) ? `meta=${safeJson(meta)}` : null,
+    safeJson(details) ? `details=${safeJson(details)}` : null,
+    statusDetails ? `statusDetails=${statusDetails.slice(0, 300)}` : null,
   ].filter(Boolean);
   return parts.join(' | ');
 }
@@ -80,13 +115,13 @@ function recordError(op: string, err: any) {
     if (now - lastNotFoundHintAt < NOT_FOUND_HINT_THROTTLE_MS) return;
     lastNotFoundHintAt = now;
     console.warn(
-      `[FirestoreAdmin] NOT_FOUND: database "${effectiveDatabaseId || DEFAULT_DATABASE_ID}" not found ` +
-        `under project "${effectiveProjectId || 'unknown'}". Canonical backend is ` +
-        `project="${EXPECTED_PROJECT_ID}" database="${DEFAULT_DATABASE_ID}". ` +
-        `Fix: 1) Firebase console > ${EXPECTED_PROJECT_ID} > Firestore Database — the named DB must exist. ` +
-        `2) Vercel env FIREBASE_SERVICE_ACCOUNT_JSON project_id must be "${EXPECTED_PROJECT_ID}". ` +
-        `3) FIRESTORE_DATABASE_ID must be unset or exactly "${DEFAULT_DATABASE_ID}" (never "(default)"). ` +
-        `4) Enable Firestore API + grant the service account Cloud Datastore User.`
+      `[FirestoreAdmin] NOT_FOUND on lookup ${requestResourcePath()}. ` +
+        `Canonical backend is project="${EXPECTED_PROJECT_ID}" database="${DEFAULT_DATABASE_ID}". ` +
+        `Fix: 1) Firebase console > ${EXPECTED_PROJECT_ID} > Firestore Database — the named DB must exist ` +
+        `in Firestore Native mode (a Datastore-mode DB 404s every Firestore query and can't be converted). ` +
+        `2) Vercel FIREBASE_SERVICE_ACCOUNT_JSON project_id must be "${EXPECTED_PROJECT_ID}" and the key must not be deleted. ` +
+        `3) FIRESTORE_DATABASE_ID must be unset or exactly "${DEFAULT_DATABASE_ID}" (no whitespace, never "(default)"). ` +
+        `4) Enable Cloud Firestore API on ${EXPECTED_PROJECT_ID} + grant the service account Cloud Datastore User.`
     );
   }
 }
@@ -96,12 +131,26 @@ function resolveProjectId(): string {
     const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '';
     if (rawJson.trim()) {
       const parsed = JSON.parse(rawJson);
-      if (parsed?.project_id) return String(parsed.project_id);
+      if (parsed?.project_id) return String(parsed.project_id).trim();
     }
   } catch {
     // ignore — buildCredential logs the parse error
   }
-  return process.env.FIREBASE_PROJECT_ID || '';
+  return (process.env.FIREBASE_PROJECT_ID || '').trim();
+}
+
+/** Non-secret service-account identifier (client_email is an identifier, not a credential). */
+function resolveServiceAccountEmail(): string {
+  try {
+    const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '';
+    if (rawJson.trim()) {
+      const parsed = JSON.parse(rawJson);
+      if (parsed?.client_email) return String(parsed.client_email).trim();
+    }
+  } catch {
+    // ignore
+  }
+  return (process.env.FIREBASE_CLIENT_EMAIL || '').trim();
 }
 
 function buildCredential() {
@@ -136,7 +185,15 @@ export function getAdminDb(): Firestore | null {
       return null;
     }
     effectiveProjectId = resolveProjectId();
-    effectiveDatabaseId = process.env.FIRESTORE_DATABASE_ID || DEFAULT_DATABASE_ID;
+    effectiveServiceAccount = resolveServiceAccountEmail();
+    const rawDatabaseId = process.env.FIRESTORE_DATABASE_ID || '';
+    effectiveDatabaseId = rawDatabaseId.trim() || DEFAULT_DATABASE_ID;
+    if (rawDatabaseId && rawDatabaseId !== effectiveDatabaseId) {
+      console.warn(
+        `[FirestoreAdmin] FIRESTORE_DATABASE_ID had leading/trailing whitespace (len ${rawDatabaseId.length} -> ${effectiveDatabaseId.length}) — trimmed. ` +
+          `Re-save the Vercel env value cleanly to avoid 5 NOT_FOUND on a phantom DB id.`
+      );
+    }
     const app = getApps().length
       ? getApps()[0]
       : initializeApp(effectiveProjectId ? { credential, projectId: effectiveProjectId } : { credential });
@@ -157,7 +214,11 @@ export function getAdminDb(): Firestore | null {
             `Unset FIRESTORE_DATABASE_ID unless you intentionally migrated.`
         );
       }
+      console.log(`[FirestoreAdmin] Lookup path: ${requestResourcePath()}`);
     }
+    // Fire-and-forget: distinguishes "database does not exist" (NOT_FOUND)
+    // from "exists but key has no access" (PERMISSION_DENIED) once per instance.
+    void probeDatabaseReachability();
     return db;
   } catch (err) {
     console.warn('[FirestoreAdmin] Init failed:', formatFirestoreError(err));
@@ -167,6 +228,38 @@ export function getAdminDb(): Firestore | null {
 
 export function isAdminDbConfigured(): boolean {
   return getAdminDb() !== null;
+}
+
+/**
+ * One-shot probe: `listCollections` on the canonical DB classifies the outage.
+ * - success -> 'reachable' (outage is query-level, not DB-level)
+ * - 5 NOT_FOUND -> 'not_found' (DB id doesn't resolve: wrong id, wrong project,
+ *   API disabled, or Datastore-mode DB)
+ * - 7 PERMISSION_DENIED -> 'denied' (DB exists, service account lacks access)
+ * Fire-and-forget from getAdminDb(); result lands in getFirestoreDiagnostics().
+ */
+async function probeDatabaseReachability(): Promise<void> {
+  if (probeStarted || !db) return;
+  probeStarted = true;
+  try {
+    const cols = await db.listCollections();
+    dbProbeStatus = 'reachable';
+    dbProbeMessage = `ok (${cols.length} collections) @ ${requestResourcePath()}`;
+    console.log(`[FirestoreAdmin] Probe: database reachable — ${dbProbeMessage}`);
+  } catch (err) {
+    const code = getErrorCode(err);
+    if (code === 5 || isNotFoundError(err)) {
+      dbProbeStatus = 'not_found';
+      dbProbeMessage = `NOT_FOUND @ ${requestResourcePath()} — DB id does not resolve under this project/key`;
+    } else if (code === 7) {
+      dbProbeStatus = 'denied';
+      dbProbeMessage = `PERMISSION_DENIED @ ${requestResourcePath()} — DB exists, key lacks Firestore access`;
+    } else {
+      dbProbeStatus = 'error';
+      dbProbeMessage = String((err as Error)?.message || err).slice(0, 300);
+    }
+    console.warn(`[FirestoreAdmin] Probe: ${dbProbeStatus} —`, formatFirestoreError(err));
+  }
 }
 
 /** Non-secret diagnostics safe to return to authed admin callers. */
@@ -179,6 +272,10 @@ export function getFirestoreDiagnostics(): Record<string, unknown> {
     projectMatch: effectiveProjectId ? effectiveProjectId === EXPECTED_PROJECT_ID : null,
     databaseId: effectiveDatabaseId || null,
     databaseExpected: DEFAULT_DATABASE_ID,
+    lookupPath: requestResourcePath(),
+    serviceAccount: effectiveServiceAccount || null,
+    dbProbeStatus,
+    dbProbeMessage,
     lastErrorOp,
     lastErrorCode,
     lastErrorMessage,
