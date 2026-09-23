@@ -562,7 +562,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { status, notes } = req.body || {};
 
     if (!global.__THEORIA_ORDERS__) global.__THEORIA_ORDERS__ = [];
-    const idx = global.__THEORIA_ORDERS__.findIndex((o) => o.id === targetId || o.orderCode === targetId);
+    let idx = global.__THEORIA_ORDERS__.findIndex((o) => o.id === targetId || o.orderCode === targetId);
+
+    // Memory is per-instance and evaporates on cold start/scale-out — fall
+    // back to the durable Firestore record (same pattern as GET /:id) before
+    // 404ing, then rehydrate memory so later ops hit the fast path.
+    if (idx === -1 && targetId) {
+      const durable = await adminGetOrderByCode(String(targetId));
+      if (durable && (durable.id || durable.orderCode)) {
+        if (!global.__THEORIA_ORDERS__.some((o) => o.id === durable.id || o.orderCode === durable.orderCode)) {
+          global.__THEORIA_ORDERS__.unshift(durable);
+        }
+        idx = global.__THEORIA_ORDERS__.findIndex((o) => o.id === durable.id || o.orderCode === durable.orderCode);
+      }
+    }
 
     if (idx === -1) {
       return res.status(404).json({ success: false, error: 'Order not found' });
