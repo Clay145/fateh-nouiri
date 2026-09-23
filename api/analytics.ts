@@ -134,6 +134,29 @@ function capiHash(val: string): string {
   return crypto.createHash('sha256').update(val.trim().toLowerCase()).digest('hex');
 }
 
+/** Normalize Algerian phone to 213XXXXXXXXX so CAPI ph matches browser adv.matching. */
+function normalizeDzPhone(phone?: string | null): string {
+  if (!phone) return '';
+  const digits = String(phone).replace(/[^0-9]/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('0')) return `213${digits.substring(1)}`;
+  if (digits.startsWith('213')) return digits;
+  return `213${digits}`;
+}
+
+function splitDzName(fullName?: string | null): { firstName: string; lastName: string } {
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return { firstName: '', lastName: '' };
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+  return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+}
+
+function extractDzWilayaCode(wilaya?: string | null): string {
+  if (!wilaya) return '';
+  const m = String(wilaya).trim().match(/^(\d{2})\b/);
+  return m ? m[1] : '';
+}
+
 /**
  * Validate that an fbclid string is authentic, not truncated, and contains valid characters.
  * Genuine Meta Click IDs are Base64/Base64url-like tokens, typically 25 to 100+ characters.
@@ -212,6 +235,22 @@ async function sendCapiStandardEvent(params: {
   ip?: string;
   referer?: string;
   testEventCode?: string;
+  // Enrichment: identity captured on the form (hashed here, never logged raw).
+  customerName?: string;
+  phone?: string;
+  wilaya?: string;
+  commune?: string;
+  externalId?: string;
+  // Enrichment: real economics + behavioral context (raw custom_data).
+  packageId?: string;
+  units?: number;
+  discountValue?: number;
+  wilayaCode?: string;
+  ctaLabel?: string;
+  fieldCompleted?: string;
+  trafficSource?: string;
+  deviceType?: string;
+  dwellS?: number;
 }): Promise<void> {
   if (!global.__THEORIA_CAPI_SENT__) global.__THEORIA_CAPI_SENT__ = new Set<string>();
   const key = `${params.eventName}|${params.eventId}`;
@@ -231,17 +270,54 @@ async function sendCapiStandardEvent(params: {
   const pixelId = process.env.META_PIXEL_ID || '28477410788542282';
 
   const userData: Record<string, unknown> = { country: [capiHash('dz')] };
+  // Identity enrichment: only hashed values leave this function. Missing
+  // values are omitted (Meta rule) — upper-funnel events before any typing
+  // still send the anonymous baseline below.
+  const normalizedPhone = normalizeDzPhone(params.phone);
+  if (normalizedPhone) userData.ph = [capiHash(normalizedPhone)];
+  const { firstName, lastName } = splitDzName(params.customerName);
+  if (firstName) userData.fn = [capiHash(firstName)];
+  if (lastName) userData.ln = [capiHash(lastName)];
+  if (params.wilaya) userData.st = [capiHash(params.wilaya)];
+  if (params.commune) userData.ct = [capiHash(params.commune)];
+  if (params.externalId) userData.external_id = [capiHash(params.externalId)];
   if (params.fbp) userData.fbp = params.fbp;
   const validatedFbc = sanitizeAndValidateFbc(params.fbc);
   if (validatedFbc) userData.fbc = validatedFbc;
   if (params.ip) userData.client_ip_address = params.ip;
   if (params.userAgent) userData.client_user_agent = params.userAgent;
 
-  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'DZD').toUpperCase();
+  // Reporting currency defaults to USD: fbevents.js rejects DZD
+  // ("Parameter 'currency' is invalid"), so browser + CAPI must agree on USD.
+  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
   const rawValue = Number(params.value) || 9500;
   const value =
     metaCurrency === 'DZD' ? rawValue : Number((rawValue / (metaCurrency === 'EUR' ? 145 : 135)).toFixed(2));
   const currency = metaCurrency === 'DZD' || metaCurrency === 'EUR' ? metaCurrency : 'USD';
+
+  const resolvedContentIds = params.contentIds?.length ? params.contentIds : ['theoria_eye_massager_pro'];
+  const qtyRaw = Number(params.units ?? params.numItems);
+  const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? Math.min(10, Math.floor(qtyRaw)) : 1;
+  const wilayaCode = params.wilayaCode || extractDzWilayaCode(params.wilaya);
+  const customData: Record<string, unknown> = {
+    value,
+    currency,
+    content_name: params.contentName || 'جهاز مساج واسترخاء العينين Theoria',
+    content_ids: resolvedContentIds,
+    content_type: 'product',
+    content_category: 'eye_care_device',
+    num_items: qty,
+    contents: [{ id: resolvedContentIds[0], quantity: qty, item_price: value }],
+    shipping_value: 0,
+  };
+  if (params.packageId) customData.package_id = params.packageId;
+  if (typeof params.discountValue === 'number') customData.discount_value = params.discountValue;
+  if (wilayaCode) customData.wilaya_code = wilayaCode;
+  if (params.ctaLabel) customData.cta_label = params.ctaLabel;
+  if (params.fieldCompleted) customData.field_completed = params.fieldCompleted;
+  if (params.trafficSource) customData.traffic_source = params.trafficSource;
+  if (params.deviceType) customData.device_type = params.deviceType;
+  if (typeof params.dwellS === 'number') customData.dwell_s = params.dwellS;
 
   const payload: Record<string, unknown> = {
     data: [
@@ -252,14 +328,7 @@ async function sendCapiStandardEvent(params: {
         event_source_url: params.referer || 'https://theoriastore.com/',
         action_source: 'website',
         user_data: userData,
-        custom_data: {
-          value,
-          currency,
-          content_name: params.contentName || 'جهاز مساج واسترخاء العينين Theoria',
-          content_ids: params.contentIds?.length ? params.contentIds : ['theoria_eye_massager_pro'],
-          content_type: 'product',
-          num_items: Number(params.numItems) || 1,
-        },
+        custom_data: customData,
       },
     ],
   };
@@ -399,6 +468,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
         (Array.isArray(rawFbclid) ? rawFbclid[0] : rawFbclid) ||
         (body.fbclid ? String(body.fbclid) : undefined);
       const validatedFbc = sanitizeAndValidateFbc((body.fbc ? String(body.fbc) : undefined) || rawCookieFbc, fbclidVal);
+      const dwellRaw = Number(body.dwellS);
       sendCapiStandardEvent({
         eventName: resolvedCapiName,
         eventId: capiEventId,
@@ -411,6 +481,28 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
             : undefined,
         contentIds: Array.isArray(body.contentIds) ? body.contentIds.map(String) : undefined,
         numItems: body.numItems !== undefined ? Number(body.numItems) : 1,
+        customerName: body.customerName ? String(body.customerName) : undefined,
+        phone: body.phone ? String(body.phone) : undefined,
+        wilaya: body.wilaya ? String(body.wilaya) : undefined,
+        commune: body.commune ? String(body.commune) : undefined,
+        externalId: body.externalId
+          ? String(body.externalId)
+          : typeof body.sessionId === 'string'
+            ? String(body.sessionId)
+            : undefined,
+        packageId: body.packageId ? String(body.packageId) : undefined,
+        units: body.units !== undefined ? Number(body.units) : undefined,
+        discountValue: body.discountValue !== undefined ? Number(body.discountValue) : undefined,
+        wilayaCode: body.wilayaCode ? String(body.wilayaCode) : undefined,
+        ctaLabel: body.ctaLabel ? String(body.ctaLabel) : undefined,
+        fieldCompleted: body.fieldCompleted
+          ? String(body.fieldCompleted)
+          : body.fieldName
+            ? String(body.fieldName)
+            : undefined,
+        trafficSource: body.trafficSource ? String(body.trafficSource) : undefined,
+        deviceType: body.deviceType ? String(body.deviceType) : undefined,
+        dwellS: Number.isFinite(dwellRaw) && dwellRaw >= 0 ? Math.min(86400, Math.floor(dwellRaw)) : undefined,
         fbp: (body.fbp ? String(body.fbp) : undefined) || cookieFbp,
         fbc: validatedFbc,
         userAgent: headerVal(req.headers['user-agent']),

@@ -203,23 +203,71 @@ async function processMetaCapiStandardEvent(params: {
   ip?: string;
   referer?: string;
   testEventCode?: string;
+  customerName?: string;
+  phone?: string;
+  wilaya?: string;
+  commune?: string;
+  externalId?: string;
+  packageId?: string;
+  units?: number;
+  discountValue?: number;
+  wilayaCode?: string;
+  ctaLabel?: string;
+  fieldCompleted?: string;
+  trafficSource?: string;
+  deviceType?: string;
+  dwellS?: number;
 }): Promise<void> {
   if (processedCapiStandardEventIds.has(params.eventId)) return;
   processedCapiStandardEventIds.add(params.eventId);
 
   const userData: Record<string, unknown> = { country: [hashSha256('dz')] };
+  const normalizedStdPhone = normalizeAlgerianPhone(params.phone || '');
+  if (normalizedStdPhone) userData.ph = [hashSha256(normalizedStdPhone)];
+  const { firstName: stdFn, lastName: stdLn } = splitName(params.customerName || '');
+  if (stdFn) userData.fn = [hashSha256(stdFn)];
+  if (stdLn) userData.ln = [hashSha256(stdLn)];
+  if (params.wilaya) userData.st = [hashSha256(params.wilaya)];
+  if (params.commune) userData.ct = [hashSha256(params.commune)];
+  if (params.externalId) userData.external_id = [hashSha256(params.externalId)];
   if (params.fbp) userData.fbp = params.fbp;
   const validatedFbc = sanitizeAndValidateFbc(params.fbc);
   if (validatedFbc) userData.fbc = validatedFbc;
   if (params.ip) userData.client_ip_address = params.ip;
   if (params.userAgent) userData.client_user_agent = params.userAgent;
 
-  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'DZD').toUpperCase();
+  // Reporting currency defaults to USD: fbevents.js rejects DZD
+  // ("Parameter 'currency' is invalid"), so browser + CAPI must agree on USD.
+  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
   const rawValue = Number(params.value) || 9500;
   const value = metaCurrency === 'DZD'
     ? rawValue
     : Number((rawValue / (metaCurrency === 'EUR' ? 145 : 135)).toFixed(2));
   const currency = metaCurrency === 'DZD' || metaCurrency === 'EUR' ? metaCurrency : 'USD';
+
+  const stdContentIds = params.contentIds?.length ? params.contentIds : ['theoria_eye_massager_pro'];
+  const stdQtyRaw = Number(params.units ?? params.numItems);
+  const stdQty = Number.isFinite(stdQtyRaw) && stdQtyRaw > 0 ? Math.min(10, Math.floor(stdQtyRaw)) : 1;
+  const stdWilayaCode = params.wilayaCode || (/^(\d{2})\b/.exec(String(params.wilaya || ''))?.[1] || '');
+  const stdCustom: Record<string, unknown> = {
+    value,
+    currency,
+    content_name: params.contentName || 'جهاز مساج واسترخاء العينين Theoria',
+    content_ids: stdContentIds,
+    content_type: params.contentType || 'product',
+    content_category: 'eye_care_device',
+    num_items: stdQty,
+    contents: [{ id: stdContentIds[0], quantity: stdQty, item_price: value }],
+    shipping_value: 0,
+  };
+  if (params.packageId) stdCustom.package_id = params.packageId;
+  if (typeof params.discountValue === 'number') stdCustom.discount_value = params.discountValue;
+  if (stdWilayaCode) stdCustom.wilaya_code = stdWilayaCode;
+  if (params.ctaLabel) stdCustom.cta_label = params.ctaLabel;
+  if (params.fieldCompleted) stdCustom.field_completed = params.fieldCompleted;
+  if (params.trafficSource) stdCustom.traffic_source = params.trafficSource;
+  if (params.deviceType) stdCustom.device_type = params.deviceType;
+  if (typeof params.dwellS === 'number') stdCustom.dwell_s = params.dwellS;
 
   const payload: Record<string, unknown> = {
     data: [{
@@ -229,14 +277,7 @@ async function processMetaCapiStandardEvent(params: {
       event_source_url: params.referer || 'https://theoriastore.com/',
       action_source: 'website',
       user_data: userData,
-      custom_data: {
-        value,
-        currency,
-        content_name: params.contentName || 'جهاز مساج واسترخاء العينين Theoria',
-        content_ids: params.contentIds || ['theoria_eye_massager_pro'],
-        content_type: params.contentType || 'product',
-        ...(params.numItems ? { num_items: params.numItems } : {}),
-      },
+      custom_data: stdCustom,
     }],
   };
   if (params.testEventCode) payload.test_event_code = params.testEventCode;
@@ -337,31 +378,78 @@ async function processMetaCapiPurchase(
   if (clientContext.ip) userData.client_ip_address = clientContext.ip;
   if (clientContext.userAgent) userData.client_user_agent = clientContext.userAgent;
 
-  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'DZD').toUpperCase();
+  // Reporting currency defaults to USD: fbevents.js rejects DZD
+  // ("Parameter 'currency' is invalid"), so browser + CAPI must agree on USD.
+  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
   const effectiveCurrency = metaCurrency === 'DZD' ? 'DZD' : (metaCurrency === 'EUR' ? 'EUR' : 'USD');
   const rawPrice = Number(order.totalPrice) || 9500;
   const effectiveValue = effectiveCurrency === 'USD'
     ? Number((rawPrice / 135).toFixed(2))
     : (effectiveCurrency === 'EUR' ? Number((rawPrice / 145).toFixed(2)) : rawPrice);
 
-  const customData = {
+  // Real package economics: units/discount/package_id derived from contentId
+  // (single=1, double=2, triple=3). Falls back to qty 1 for unknown ids.
+  const purchaseContentId = order.contentId || 'theoria_eye_massager_pro';
+  const purchaseUnits = purchaseContentId.includes('triple') ? 3 : purchaseContentId.includes('double') ? 2 : 1;
+  const purchasePackageId = purchaseContentId.includes('triple')
+    ? 'triple'
+    : purchaseContentId.includes('double')
+      ? 'double'
+      : purchaseContentId.includes('single')
+        ? 'single'
+        : undefined;
+  const purchaseOriginal = purchaseContentId.includes('triple')
+    ? 44700
+    : purchaseContentId.includes('double')
+      ? 29800
+      : purchaseContentId.includes('single')
+        ? 14900
+        : rawPrice;
+  const purchaseDiscount = Math.max(0, purchaseOriginal - rawPrice);
+  const purchaseWilayaCode = (/^(\d{2})\b/.exec(String(order.wilaya || ''))?.[1] || '');
+  // Repeat-buyer signal from the local file store (best-effort, same normalized phone).
+  let purchasePredictedLtv = rawPrice;
+  try {
+    const prior = orders.filter(
+      (o) => o.orderCode !== orderCode && normalizeAlgerianPhone(o.phone || '') === normalizedPhone
+    );
+    if (prior.length) {
+      const spent = prior.reduce((s, o) => s + (Number(o.totalPrice) || 0), 0);
+      purchasePredictedLtv = spent + rawPrice;
+    }
+  } catch {
+    // ignore
+  }
+  const purchasePredictedConverted = effectiveCurrency === 'USD'
+    ? Number((purchasePredictedLtv / 135).toFixed(2))
+    : effectiveCurrency === 'EUR'
+      ? Number((purchasePredictedLtv / 145).toFixed(2))
+      : purchasePredictedLtv;
+
+  const customData: Record<string, unknown> = {
     currency: effectiveCurrency,
     value: effectiveValue,
     order_id: orderCode,
     content_name: order.packageTitle || 'جهاز مساج واسترخاء العينين Theoria',
-    content_ids: [order.contentId || 'theoria_eye_massager_pro'],
+    content_ids: [purchaseContentId],
     content_type: 'product',
-    num_items: 1,
+    content_category: 'eye_care_device',
+    num_items: purchaseUnits,
     original_currency: 'DZD',
     original_value: rawPrice,
+    discount_value: purchaseDiscount,
+    shipping_value: 0,
+    predicted_ltv: purchasePredictedConverted,
     contents: [
       {
-        id: order.contentId || 'theoria_eye_massager_pro',
-        quantity: 1,
+        id: purchaseContentId,
+        quantity: purchaseUnits,
         item_price: effectiveValue,
       },
     ],
   };
+  if (purchasePackageId) customData.package_id = purchasePackageId;
+  if (purchaseWilayaCode) customData.wilaya_code = purchaseWilayaCode;
 
   // event_source_url mirrors the browser's thank-you URL (host + order_id +
   // token, passed via clientContext.referer), with the test code appended when
@@ -1233,6 +1321,12 @@ async function startServer() {
       fbc,
       pageUrl,
     } = req.body || {};
+    const bodyAny = (req.body || {}) as Record<string, unknown>;
+    const strOrUndef = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
+    const numOrUndef = (v: unknown): number | undefined => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
     if (!sessionId || !event) {
       return res.status(400).json({ success: false, error: 'sessionId and event are required' });
     }
@@ -1277,6 +1371,20 @@ async function startServer() {
         contentIds: Array.isArray(contentIds) ? contentIds.map(String) : undefined,
         contentType: contentType ? String(contentType) : undefined,
         numItems: Number((req.body || {}).numItems) || Number(numItems) || 1,
+        customerName: strOrUndef(bodyAny.customerName),
+        phone: strOrUndef(bodyAny.phone),
+        wilaya: strOrUndef(bodyAny.wilaya),
+        commune: strOrUndef(bodyAny.commune),
+        externalId: strOrUndef(bodyAny.externalId) || (typeof sessionId === 'string' ? sessionId : undefined),
+        packageId: strOrUndef(bodyAny.packageId),
+        units: numOrUndef(bodyAny.units),
+        discountValue: numOrUndef(bodyAny.discountValue),
+        wilayaCode: strOrUndef(bodyAny.wilayaCode),
+        ctaLabel: strOrUndef(bodyAny.ctaLabel),
+        fieldCompleted: strOrUndef(bodyAny.fieldCompleted) || (rawFieldName ? String(rawFieldName) : undefined),
+        trafficSource: strOrUndef(bodyAny.trafficSource),
+        deviceType: strOrUndef(bodyAny.deviceType),
+        dwellS: numOrUndef(bodyAny.dwellS),
         fbp: (fbp ? String(fbp) : undefined) || trackCookieFbp,
         fbc: validatedTrackFbc,
         userAgent: (req.headers['user-agent'] as string) || undefined,

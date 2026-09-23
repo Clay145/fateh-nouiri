@@ -257,6 +257,57 @@ function getMetaTestEventCode(): string | undefined {
   return undefined;
 }
 
+/**
+ * Partial form identity cache: lets early field touches (name/phone/wilaya)
+ * enrich the NEXT server CAPI event (Lead/IC) even though analyticsService
+ * never sees the raw form state. Plain values only; server hashes them.
+ * Cleared on purchase/validation reset paths via clearAnalytics().
+ */
+const PARTIAL_IDENTITY_KEY = 'theoria_partial_identity';
+
+export function savePartialIdentity(partial: {
+  customerName?: string;
+  phone?: string;
+  wilaya?: string;
+  commune?: string;
+}): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const raw = sessionStorage.getItem(PARTIAL_IDENTITY_KEY);
+    const prev = raw ? JSON.parse(raw) : {};
+    const merged = { ...prev };
+    if (partial.customerName !== undefined) merged.customerName = partial.customerName;
+    if (partial.phone !== undefined) merged.phone = partial.phone;
+    if (partial.wilaya !== undefined) merged.wilaya = partial.wilaya;
+    if (partial.commune !== undefined) merged.commune = partial.commune;
+    sessionStorage.setItem(PARTIAL_IDENTITY_KEY, JSON.stringify(merged));
+  } catch {
+    // ignore
+  }
+}
+
+function readPartialIdentity(): {
+  customerName?: string;
+  phone?: string;
+  wilaya?: string;
+  commune?: string;
+} {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = sessionStorage.getItem(PARTIAL_IDENTITY_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return {
+      customerName: typeof parsed.customerName === 'string' ? parsed.customerName : undefined,
+      phone: typeof parsed.phone === 'string' ? parsed.phone : undefined,
+      wilaya: typeof parsed.wilaya === 'string' ? parsed.wilaya : undefined,
+      commune: typeof parsed.commune === 'string' ? parsed.commune : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
 function postEventToServer(
   event: FunnelStep,
   extra?: {
@@ -270,10 +321,23 @@ function postEventToServer(
     contentName?: string;
     contentIds?: string[];
     numItems?: number;
+    // Enrichment: identity captured on the form (forwarded for CAPI hashing).
+    customerName?: string;
+    phone?: string;
+    wilaya?: string;
+    commune?: string;
+    // Enrichment: real package economics + behavioral context.
+    packageId?: string;
+    units?: number;
+    discountValue?: number;
+    wilayaCode?: string;
+    ctaLabel?: string;
+    fieldCompleted?: string;
   }
 ) {
   if (typeof window === 'undefined') return;
   const session = getCurrentSession();
+  const partial = readPartialIdentity();
 
   const payload = {
     sessionId: session.id,
@@ -281,7 +345,7 @@ function postEventToServer(
     device: session.device,
     source: session.source,
     fieldName: extra?.fieldName,
-    selectedPackage: extra?.selectedPackage,
+    selectedPackage: extra?.selectedPackage || session.selectedPackage,
     totalPrice: extra?.totalPrice,
     eventId: extra?.eventId,
     metaEventName: extra?.metaEventName,
@@ -289,7 +353,22 @@ function postEventToServer(
     currency: extra?.currency,
     contentName: extra?.contentName ?? extra?.selectedPackage,
     contentIds: extra?.contentIds,
-    numItems: extra?.numItems ?? 1,
+    numItems: extra?.numItems ?? extra?.units ?? 1,
+    // Identity (explicit arg wins, then form-partial cache). Server hashes.
+    customerName: extra?.customerName || partial.customerName || undefined,
+    phone: extra?.phone || partial.phone || undefined,
+    wilaya: extra?.wilaya || partial.wilaya || undefined,
+    commune: extra?.commune || partial.commune || undefined,
+    // Economics + context for CAPI custom_data.
+    packageId: extra?.packageId || undefined,
+    units: extra?.units ?? extra?.numItems ?? undefined,
+    discountValue: extra?.discountValue ?? undefined,
+    wilayaCode: extra?.wilayaCode || undefined,
+    ctaLabel: extra?.ctaLabel || undefined,
+    fieldCompleted: extra?.fieldCompleted || extra?.fieldName || undefined,
+    trafficSource: session.source,
+    deviceType: session.device,
+    dwellS: Math.max(0, Math.round((Date.now() - (session.startTime || Date.now())) / 1000)),
     testEventCode: getMetaTestEventCode(),
     fbp: getFbpCookie() || undefined,
     fbc: getFbcCookie() || undefined,
@@ -362,6 +441,7 @@ export async function clearAnalytics(): Promise<void> {
     saveFunnelStats(fresh, true);
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(PARTIAL_IDENTITY_KEY);
       sessionStorage.removeItem('theoria_tracked_pv');
       sessionStorage.removeItem('theoria_tracked_eng');
       sessionStorage.removeItem('theoria_tracked_checkout');
@@ -527,6 +607,16 @@ function advanceStep(
     contentName?: string;
     contentIds?: string[];
     numItems?: number;
+    customerName?: string;
+    phone?: string;
+    wilaya?: string;
+    commune?: string;
+    packageId?: string;
+    units?: number;
+    discountValue?: number;
+    wilayaCode?: string;
+    ctaLabel?: string;
+    fieldCompleted?: string;
   }
 ) {
   // If in admin mode, do not pollute customer conversion funnel
@@ -587,7 +677,17 @@ function advanceStep(
     currency: extra?.currency,
     contentName: extra?.contentName ?? extra?.selectedPackage,
     contentIds: extra?.contentIds,
-    numItems: extra?.numItems ?? 1,
+    numItems: extra?.numItems ?? extra?.units ?? 1,
+    customerName: extra?.customerName,
+    phone: extra?.phone,
+    wilaya: extra?.wilaya,
+    commune: extra?.commune,
+    packageId: extra?.packageId,
+    units: extra?.units ?? extra?.numItems,
+    discountValue: extra?.discountValue,
+    wilayaCode: extra?.wilayaCode,
+    ctaLabel: extra?.ctaLabel,
+    fieldCompleted: extra?.fieldCompleted ?? fieldName,
   });
 }
 
@@ -635,6 +735,8 @@ export function trackPageViewVisitor(): void {
 
 /**
  * 2. Content Engaged Tracking (Deep scroll / reading features)
+ * Enriched: full catalog content_ids (all 3 packs) + category + traffic/device
+ * context so ViewContent builds a usable retargeting pool.
  */
 export function trackContentEngagement(): void {
   if (typeof window === 'undefined' || isAdminContext()) return;
@@ -643,13 +745,22 @@ export function trackContentEngagement(): void {
     const vcEventId = `vc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     // Same converted value/currency as CAPI so browser + server match on more than event_id.
     const { value: vcValue, currency: vcCurrency } = getMetaConversionAmount(9500);
+    const session = getCurrentSession();
+    const catalogIds = [
+      'theoria_eye_massager_single',
+      'theoria_eye_massager_double',
+      'theoria_eye_massager_triple',
+    ];
     trackPixelEvent('ViewContent', {
       content_name: 'جهاز مساج واسترخاء العينين Theoria',
       content_type: 'product',
-      content_ids: ['theoria_eye_massager_pro'],
+      content_category: 'eye_care_device',
+      content_ids: catalogIds,
       value: vcValue,
       currency: vcCurrency,
       num_items: 1,
+      traffic_source: session.source,
+      device_type: session.device,
     }, { eventID: vcEventId });
     advanceStep('content_engaged', undefined, {
       eventId: vcEventId,
@@ -657,6 +768,7 @@ export function trackContentEngagement(): void {
       value: 9500,
       currency: 'DZD',
       contentName: 'جهاز مساج واسترخاء العينين Theoria',
+      contentIds: catalogIds,
       numItems: 1,
     });
   }
@@ -664,8 +776,21 @@ export function trackContentEngagement(): void {
 
 /**
  * 3. Add to Cart (CTA "اطلب الآن" clicked)
+ * Enriched opts (4th arg, optional): real package economics + CTA label.
+ * Existing 3-arg callers keep working unchanged.
  */
-export function trackAddToCartClick(packageName?: string, value?: number, contentIds?: string[]): void {
+export function trackAddToCartClick(
+  packageName?: string,
+  value?: number,
+  contentIds?: string[],
+  opts?: {
+    packageId?: string;
+    units?: number;
+    discountValue?: number;
+    wilayaCode?: string;
+    ctaLabel?: string;
+  }
+): void {
   if (typeof window === 'undefined' || isAdminContext()) return;
   // Once per session: repeat CTA / package clicks only update the funnel,
   // they must not fire new browser pixel or CAPI events.
@@ -673,12 +798,20 @@ export function trackAddToCartClick(packageName?: string, value?: number, conten
     const atcEventId = `atc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     sessionStorage.setItem('theoria_fired_atc', atcEventId);
     const rawValue = value || 9500;
+    const session = getCurrentSession();
     trackAddToCart({
       content_name: packageName || 'جهاز مساج Theoria Pro',
       value: rawValue,
       currency: 'DZD',
       event_id: atcEventId,
       content_ids: contentIds,
+      packageId: opts?.packageId,
+      units: opts?.units,
+      discountValue: opts?.discountValue,
+      wilayaCode: opts?.wilayaCode,
+      trafficSource: session.source,
+      deviceType: session.device,
+      ctaLabel: opts?.ctaLabel || packageName,
     });
     advanceStep('add_to_cart', undefined, {
       selectedPackage: packageName,
@@ -688,7 +821,12 @@ export function trackAddToCartClick(packageName?: string, value?: number, conten
       currency: 'DZD',
       contentName: packageName || 'جهاز مساج Theoria Pro',
       contentIds,
-      numItems: 1,
+      numItems: opts?.units ?? 1,
+      packageId: opts?.packageId,
+      units: opts?.units,
+      discountValue: opts?.discountValue,
+      wilayaCode: opts?.wilayaCode,
+      ctaLabel: opts?.ctaLabel || packageName,
     });
     return;
   }
@@ -700,28 +838,50 @@ export function trackAddToCartClick(packageName?: string, value?: number, conten
  * Fires ONLY on genuine purchase intent: first field focus/typing or
  * package selection inside the form. Mere scrolling/viewing the form
  * must NOT count as InitiateCheckout.
+ * Enriched opts: real package economics (fixes generic content_name).
  */
-export function trackInitiateCheckoutView(value?: number, contentIds?: string[]): void {
+export function trackInitiateCheckoutView(
+  value?: number,
+  contentIds?: string[],
+  opts?: {
+    packageId?: string;
+    packageName?: string;
+    units?: number;
+    discountValue?: number;
+    wilayaCode?: string;
+  }
+): void {
   if (typeof window === 'undefined' || isAdminContext()) return;
   if (!sessionStorage.getItem('theoria_tracked_checkout')) {
     sessionStorage.setItem('theoria_tracked_checkout', 'true');
     const icEventId = `ic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const rawValue = value || 9500;
+    const session = getCurrentSession();
     trackInitiateCheckout({
-      content_name: 'جهاز مساج Theoria Pro',
+      content_name: opts?.packageName || 'جهاز مساج Theoria Pro',
       value: rawValue,
       currency: 'DZD',
       event_id: icEventId,
       content_ids: contentIds,
+      packageId: opts?.packageId,
+      units: opts?.units,
+      discountValue: opts?.discountValue,
+      wilayaCode: opts?.wilayaCode,
+      trafficSource: session.source,
+      deviceType: session.device,
     });
     advanceStep('initiate_checkout', undefined, {
       eventId: icEventId,
       metaEventName: 'InitiateCheckout',
       value: rawValue,
       currency: 'DZD',
-      contentName: 'جهاز مساج Theoria Pro',
+      contentName: opts?.packageName || 'جهاز مساج Theoria Pro',
       contentIds,
-      numItems: 1,
+      numItems: opts?.units ?? 1,
+      packageId: opts?.packageId,
+      units: opts?.units,
+      discountValue: opts?.discountValue,
+      wilayaCode: opts?.wilayaCode,
     });
   }
 }
@@ -772,14 +932,19 @@ export function trackFormFieldFocus(fieldName: 'fullname' | 'phone' | 'wilaya' |
         const ldEventId = `ld_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
         sessionStorage.setItem('theoria_fired_lead', ldEventId);
         const { value: ldValue, currency: ldCurrency } = getMetaConversionAmount(9500);
+        const leadSession = getCurrentSession();
         trackPixelEvent('Lead', {
           content_name: 'Checkout Form Started - Theoria',
           content_type: 'product',
+          content_category: 'eye_care_device',
           content_ids: ['theoria_eye_massager_pro'],
           value: ldValue,
           currency: ldCurrency,
           original_value: 9500,
           original_currency: 'DZD',
+          field_completed: fieldName,
+          traffic_source: leadSession.source,
+          device_type: leadSession.device,
         }, { eventID: ldEventId });
         postEventToServer('form_started', {
           fieldName,
@@ -788,7 +953,9 @@ export function trackFormFieldFocus(fieldName: 'fullname' | 'phone' | 'wilaya' |
           value: 9500,
           currency: 'DZD',
           contentName: 'Checkout Form Started - Theoria',
+          contentIds: ['theoria_eye_massager_pro'],
           numItems: 1,
+          fieldCompleted: fieldName,
         });
       }
     } catch {

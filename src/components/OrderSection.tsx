@@ -9,6 +9,7 @@ import {
   trackInitiateCheckoutView,
   trackFormFieldEngagement,
   trackValidationFailed,
+  savePartialIdentity,
 } from '../services/analyticsService';
 
 interface OrderSectionProps {
@@ -28,6 +29,44 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
   // Idempotency key for this form attempt: reused across retries/double-clicks
   // so a retry never mints a second orderCode (server dedups by orderCode).
   const attemptKeysRef = useRef<{ orderCode: string; id: string } | null>(null);
+  // Early-matching debounce: re-attaching fbq init on every keystroke is
+  // wasteful; attach at most once per value change (blur-driven).
+  const earlyMatchSigRef = useRef<string>('');
+
+  /**
+   * Early Advanced Matching (P1): attach phone/name to the browser pixel as
+   * soon as the shopper finishes each field (blur), so AddToCart /
+   * InitiateCheckout / Lead events that fire after that point match instead
+   * of arriving anonymous. Only valid values are sent; submit re-attaches
+   * with the final cleaned values. Also caches partial identity for the
+   * server CAPI Lead/IC leg (hashed server-side).
+   */
+  const attachEarlyMatching = (overrides?: { name?: string; phone?: string; wilayaName?: string; commune?: string }) => {
+    try {
+      const name = (overrides?.name ?? fullName).trim();
+      const phoneVal = (overrides?.phone ?? phone).replace(/[\s\-\.\(\)]/g, '').trim();
+      const validPhone = /^(05|06|07|02)[0-9]{8}$/.test(phoneVal) ? phoneVal : '';
+      const validName = name.length >= 3 ? name : '';
+      if (!validPhone && !validName) return;
+      const sig = `${validName}|${validPhone}`;
+      if (earlyMatchSigRef.current === sig) return;
+      earlyMatchSigRef.current = sig;
+      const parts = validName ? validName.split(/\s+/) : [];
+      setAdvancedMatching({
+        phone: validPhone || undefined,
+        firstName: parts[0] || undefined,
+        lastName: parts.slice(1).join(' ') || undefined,
+      });
+      savePartialIdentity({
+        customerName: validName || undefined,
+        phone: validPhone || undefined,
+        wilaya: overrides?.wilayaName,
+        commune: overrides?.commune,
+      });
+    } catch {
+      // tracking must never break the form
+    }
+  };
 
   // Broadcast selected package so the sticky dock can sync its total
   // without lifting state (presentation-only bridge, no backend change).
@@ -246,9 +285,20 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                     onClick={() => {
                       setSelectedPackage(pkg);
                       // Intent signal: selecting a package inside the form = real checkout intent
-                      // Pass the true package value + content id so pixel/CAPI carry real economics.
-                      trackInitiateCheckoutView(pkg.price, [pkg.contentId]);
-                      trackAddToCartClick(`اختيار باقة: ${pkg.name}`, pkg.price, [pkg.contentId]);
+                      // Pass real package economics so pixel/CAPI carry true quantity/value.
+                      const discount = Math.max(0, (pkg.originalPrice || 0) - (pkg.price || 0));
+                      trackInitiateCheckoutView(pkg.price, [pkg.contentId], {
+                        packageId: pkg.id,
+                        packageName: pkg.name,
+                        units: pkg.units,
+                        discountValue: discount,
+                      });
+                      trackAddToCartClick(`اختيار باقة: ${pkg.name}`, pkg.price, [pkg.contentId], {
+                        packageId: pkg.id,
+                        units: pkg.units,
+                        discountValue: discount,
+                        ctaLabel: `package_select:${pkg.id}`,
+                      });
                     }}
                     className={`relative flex items-center justify-between p-3.5 rounded-xl bg-[#1a2438]/80 border-2 cursor-pointer transition-all ${
                       isSelected
@@ -298,6 +348,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                   aria-invalid={!!fieldErrors.fullname}
                   aria-describedby={fieldErrors.fullname ? 'fullname-error' : undefined}
                   onFocus={() => trackFormFieldEngagement('fullname')}
+                  onBlur={() => attachEarlyMatching({ name: fullName })}
                   onChange={(e) => {
                     setFullName(e.target.value);
                     if (fieldErrors.fullname) setFieldErrors((prev) => ({ ...prev, fullname: undefined }));
@@ -325,6 +376,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                   aria-invalid={!!fieldErrors.phone}
                   aria-describedby={fieldErrors.phone ? 'phone-error' : undefined}
                   onFocus={() => trackFormFieldEngagement('phone')}
+                  onBlur={() => attachEarlyMatching({ phone })}
                   onChange={(e) => {
                     setPhone(e.target.value);
                     if (fieldErrors.phone) setFieldErrors((prev) => ({ ...prev, phone: undefined }));
@@ -352,6 +404,12 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                   onChange={(e) => {
                     setWilayaCode(e.target.value);
                     if (fieldErrors.wilaya) setFieldErrors((prev) => ({ ...prev, wilaya: undefined }));
+                    try {
+                      const obj = ALGERIA_WILAYAS.find((w) => w.code === e.target.value);
+                      savePartialIdentity({ wilaya: obj ? obj.nameAr : undefined });
+                    } catch {
+                      // ignore
+                    }
                   }}
                   className={`w-full pr-10 pl-3 py-2.5 rounded-xl bg-[#0a0e1a] border ${fieldErrors.wilaya ? 'border-[#ff6b6b]' : 'border-[#2a3a48]/40'} focus:border-[#7dd3fc] text-white text-xs outline-none appearance-none cursor-pointer transition-colors box-border`}
                 >
@@ -383,6 +441,13 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                   aria-invalid={!!fieldErrors.address}
                   aria-describedby={fieldErrors.address ? 'address-error' : undefined}
                   onFocus={() => trackFormFieldEngagement('address')}
+                  onBlur={() => {
+                    try {
+                      savePartialIdentity({ commune: address.trim() || undefined });
+                    } catch {
+                      // ignore
+                    }
+                  }}
                   onChange={(e) => {
                     setAddress(e.target.value);
                     if (fieldErrors.address) setFieldErrors((prev) => ({ ...prev, address: undefined }));

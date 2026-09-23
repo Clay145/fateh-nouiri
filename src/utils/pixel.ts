@@ -159,13 +159,67 @@ export function getFbcCookie(): string | null {
 }
 
 /**
+ * Normalize an Algerian phone to E.164 without plus (213XXXXXXXXX) so the
+ * browser advanced-matching hash matches the server CAPI ph hash exactly.
+ * Shared contract: strip non-digits, 0XXXXXXXXX -> 213XXXXXXXXX.
+ */
+export function normalizeAlgerianPhone(phone?: string | null): string {
+  if (!phone) return '';
+  const digits = String(phone).replace(/[^0-9]/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('0')) return `213${digits.substring(1)}`;
+  if (digits.startsWith('213')) return digits;
+  return `213${digits}`;
+}
+
+/**
+ * Extract the 2-digit wilaya code from a "16 - الجزائر العاصمة" style label.
+ * Returns '' when unknown — sent as raw custom_data (never hashed user_data).
+ */
+export function extractWilayaCode(wilaya?: string | null): string {
+  if (!wilaya) return '';
+  const m = String(wilaya).trim().match(/^(\d{2})\b/);
+  return m ? m[1] : '';
+}
+
+/**
+ * Build Meta contents[] + num_items from real package economics.
+ * Single source of truth so browser pixel and server CAPI agree on
+ * quantity/value for single (1) / double (2) / triple (3) packs.
+ */
+export function buildMetaContents(params: {
+  contentId?: string | null;
+  units?: number | null;
+  itemPrice?: number | null;
+}): { contents: Array<{ id: string; quantity: number; item_price: number }>; num_items: number } {
+  const id = (params.contentId || '').trim() || 'theoria_eye_massager_pro';
+  const units = Number(params.units);
+  const qty = Number.isFinite(units) && units > 0 ? Math.min(10, Math.floor(units)) : 1;
+  const price = Number(params.itemPrice);
+  return {
+    contents: [{ id, quantity: qty, item_price: Number.isFinite(price) ? price : 0 }],
+    num_items: qty,
+  };
+}
+
+/**
  * Advanced Matching: attach hashed customer keys to all subsequent browser events.
  * fbq hashes plain values automatically — pass raw email/phone/name. Only non-empty
  * fields are sent. Call once the customer has typed their details (order submit)
  * so ViewContent/AddToCart/InitiateCheckout/Purchase all match better server-side.
  * external_id mirrors the server CAPI external_id (the order code) so both sides
  * match on the identical key.
+ *
+ * Duplicate-init guard: fbevents.js logs "Duplicate Pixel ID" on every repeat
+ * `fbq('init', sameId)`. Keys are accumulated across calls (a later call never
+ * drops earlier keys), and `init` re-fires ONLY when the merged set gained a
+ * new/changed key — submit + thank-you re-hydrates with identical data are
+ * no-ops. Note: 1 repeat init per typing session (base page-load init has no
+ * user data yet) is inherent to progressive matching and harmless.
  */
+const attachedAdvKeys: Record<string, string> = {};
+let advInitFired = false;
+
 export function setAdvancedMatching(params: {
   email?: string;
   phone?: string;
@@ -175,21 +229,35 @@ export function setAdvancedMatching(params: {
 }): void {
   if (typeof window === 'undefined' || typeof window.fbq !== 'function') return;
   try {
-    const adv: Record<string, string> = {};
+    const incoming: Record<string, string> = {};
     const email = (params.email || '').trim().toLowerCase();
-    if (email && email.includes('@')) adv.em = email;
-    const digits = (params.phone || '').replace(/[^0-9]/g, '');
-    if (digits) {
-      adv.ph = digits.startsWith('0') ? `213${digits.substring(1)}` : digits;
+    if (email && email.includes('@')) incoming.em = email;
+    const normalizedPhone = normalizeAlgerianPhone(params.phone || '');
+    if (normalizedPhone) {
+      incoming.ph = normalizedPhone;
     }
     const fn = (params.firstName || '').trim().toLowerCase();
-    if (fn) adv.fn = fn;
+    if (fn) incoming.fn = fn;
     const ln = (params.lastName || '').trim().toLowerCase();
-    if (ln) adv.ln = ln;
+    if (ln) incoming.ln = ln;
     const externalId = (params.externalId || '').trim();
-    if (externalId) adv.external_id = externalId;
-    if (Object.keys(adv).length === 0) return;
-    window.fbq('init', META_MAIN_PIXEL_ID, adv);
+    if (externalId) incoming.external_id = externalId;
+    if (Object.keys(incoming).length === 0) return;
+
+    // Merge over previously attached keys; detect whether anything is new.
+    let hasNewKey = false;
+    for (const [k, v] of Object.entries(incoming)) {
+      if (attachedAdvKeys[k] !== v) {
+        attachedAdvKeys[k] = v;
+        hasNewKey = true;
+      }
+    }
+    if (advInitFired && !hasNewKey) {
+      console.log('%c[Meta Pixel] Advanced matching unchanged — redundant init suppressed (Duplicate Pixel ID avoided)', 'color: #6b7280;');
+      return;
+    }
+    advInitFired = true;
+    window.fbq('init', META_MAIN_PIXEL_ID, { ...attachedAdvKeys });
     console.log('%c[Meta Pixel] Advanced matching keys attached (em/ph/fn/ln/external_id as available)', 'color: #1877f2;');
   } catch {
     // ignore
@@ -373,15 +441,18 @@ export function trackPixelEvent(
 }
 
 /**
- * Calculate compliant currency and value for Meta Pixel
- * (Meta fbevents.js whitelist only includes 45 major currencies like USD, EUR, SAR, AED, etc.)
- * The store charges in DZD and the ad account is billed in DZD, so raw
- * DZD values are reported by default (override with VITE_META_CURRENCY).
+ * Calculate compliant currency and value for Meta Pixel.
+ * fbevents.js validates `currency` against a whitelist of major currencies
+ * (USD, EUR, SAR, AED, ...) and rejects DZD with
+ * "Parameter 'currency' is invalid" — so the default reporting currency is
+ * USD (DZD amount ÷ 135). The true charged DZD amount is always preserved in
+ * `original_value` / `original_currency` for audit.
+ * Override with VITE_META_CURRENCY (DZD/EUR/USD).
  */
 export function getMetaConversionAmount(dzdAmount: number = 9500): { value: number; currency: string } {
   const metaCurrency = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_META_CURRENCY
     ? (import.meta as any).env.VITE_META_CURRENCY
-    : 'DZD').toUpperCase();
+    : 'USD').toUpperCase();
 
   if (metaCurrency === 'DZD') {
     return { value: dzdAmount, currency: 'DZD' };
@@ -409,6 +480,8 @@ export function trackPageView(params?: {
 /**
  * AddToCart event (when visitor clicks "اطلب الآن")
  * Returns the eventID used so the caller can share it with the server (CAPI deduplication).
+ * Enriched (no new events): real units/contents, package_id, discount,
+ * wilaya_code, traffic/device context — all as custom_data.
  */
 export function trackAddToCart(params?: {
   content_name?: string;
@@ -416,21 +489,40 @@ export function trackAddToCart(params?: {
   currency?: string;
   event_id?: string;
   content_ids?: string[];
+  packageId?: string;
+  units?: number;
+  discountValue?: number;
+  wilayaCode?: string;
+  trafficSource?: string;
+  deviceType?: string;
+  ctaLabel?: string;
 }): string {
   const eventId = params?.event_id || `atc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const rawValue = params?.value || 9500;
   const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(rawValue);
 
-  const defaultParams = {
+  const contentId = params?.content_ids?.length ? params.content_ids[0] : 'theoria_eye_massager_pro';
+  const { contents, num_items } = buildMetaContents({ contentId, units: params?.units, itemPrice: metaValue });
+
+  const defaultParams: Record<string, unknown> = {
     content_name: params?.content_name || 'جهاز مساج واسترخاء العينين Theoria',
     content_type: 'product',
+    content_category: 'eye_care_device',
     content_ids: params?.content_ids?.length ? params.content_ids : ['theoria_eye_massager_pro'],
+    contents,
     value: metaValue,
     currency: metaCurrency,
     original_value: rawValue,
     original_currency: 'DZD',
-    num_items: 1,
+    num_items,
+    shipping_value: 0,
   };
+  if (params?.packageId) defaultParams.package_id = params.packageId;
+  if (typeof params?.discountValue === 'number') defaultParams.discount_value = params.discountValue;
+  if (params?.wilayaCode) defaultParams.wilaya_code = params.wilayaCode;
+  if (params?.trafficSource) defaultParams.traffic_source = params.trafficSource;
+  if (params?.deviceType) defaultParams.device_type = params.deviceType;
+  if (params?.ctaLabel) defaultParams.cta_label = params.ctaLabel;
 
   trackPixelEvent('AddToCart', defaultParams, { eventID: eventId });
   return eventId;
@@ -441,6 +533,7 @@ export function trackAddToCart(params?: {
  * first field interaction or package selection inside the order form).
  * Mere form views/scrolls must NOT fire this event.
  * Returns the eventID used so the caller can share it with the server (CAPI deduplication).
+ * Enriched like AddToCart: real package economics + geo/behavioral context.
  */
 export function trackInitiateCheckout(params?: {
   content_name?: string;
@@ -449,21 +542,42 @@ export function trackInitiateCheckout(params?: {
   num_items?: number;
   event_id?: string;
   content_ids?: string[];
+  packageId?: string;
+  units?: number;
+  discountValue?: number;
+  wilayaCode?: string;
+  trafficSource?: string;
+  deviceType?: string;
 }): string {
   const eventId = params?.event_id || `ic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const rawValue = params?.value || 9500;
   const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(rawValue);
 
-  const defaultParams = {
+  const contentId = params?.content_ids?.length ? params.content_ids[0] : 'theoria_eye_massager_pro';
+  const { contents, num_items } = buildMetaContents({
+    contentId,
+    units: params?.units ?? params?.num_items,
+    itemPrice: metaValue,
+  });
+
+  const defaultParams: Record<string, unknown> = {
     content_name: params?.content_name || 'جهاز مساج واسترخاء العينين Theoria',
     content_type: 'product',
+    content_category: 'eye_care_device',
     content_ids: params?.content_ids?.length ? params.content_ids : ['theoria_eye_massager_pro'],
+    contents,
     value: metaValue,
     currency: metaCurrency,
     original_value: rawValue,
     original_currency: 'DZD',
-    num_items: params?.num_items || 1,
+    num_items,
+    shipping_value: 0,
   };
+  if (params?.packageId) defaultParams.package_id = params.packageId;
+  if (typeof params?.discountValue === 'number') defaultParams.discount_value = params.discountValue;
+  if (params?.wilayaCode) defaultParams.wilaya_code = params.wilayaCode;
+  if (params?.trafficSource) defaultParams.traffic_source = params.trafficSource;
+  if (params?.deviceType) defaultParams.device_type = params.deviceType;
 
   trackPixelEvent('InitiateCheckout', defaultParams, { eventID: eventId });
   return eventId;
@@ -482,6 +596,11 @@ export function trackPurchase(params: {
   event_id?: string;
   test_event_code?: string;
   content_ids?: string[];
+  packageId?: string;
+  units?: number;
+  discountValue?: number;
+  predictedLtv?: number;
+  wilayaCode?: string;
 }): boolean {
   const orderCode = params.order_id;
   if (!orderCode) {
@@ -535,12 +654,27 @@ export function trackPurchase(params: {
     currency: metaCurrency,
     content_name: params.content_name || 'جهاز مساج واسترخاء العينين Theoria',
     content_type: 'product',
+    content_category: 'eye_care_device',
     content_ids: params.content_ids?.length ? params.content_ids : ['theoria_eye_massager_pro'],
-    num_items: 1,
+    contents: buildMetaContents({
+      contentId: params.content_ids?.length ? params.content_ids[0] : undefined,
+      units: params.units,
+      itemPrice: metaValue,
+    }).contents,
+    num_items: buildMetaContents({
+      contentId: params.content_ids?.length ? params.content_ids[0] : undefined,
+      units: params.units,
+      itemPrice: metaValue,
+    }).num_items,
     order_id: orderCode,
     original_value: rawPrice,
     original_currency: 'DZD',
+    shipping_value: 0,
   };
+  if (params.packageId) payload.package_id = params.packageId;
+  if (typeof params.discountValue === 'number') payload.discount_value = params.discountValue;
+  if (typeof params.predictedLtv === 'number') payload.predicted_ltv = params.predictedLtv;
+  if (params.wilayaCode) payload.wilaya_code = params.wilayaCode;
 
   if (testEventCode) {
     payload.test_event_code = testEventCode;

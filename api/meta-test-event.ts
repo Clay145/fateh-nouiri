@@ -113,6 +113,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     eventId: testEventId,
   };
 
+  // Reporting currency defaults to USD: fbevents.js rejects DZD
+  // ("Parameter 'currency' is invalid"), so the test CAPI leg and the
+  // browser command below must agree on USD. Order model stays DZD.
+  const testMetaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+  const testEffectiveCurrency = testMetaCurrency === 'DZD' ? 'DZD' : testMetaCurrency === 'EUR' ? 'EUR' : 'USD';
+  const testEffectiveValue = testEffectiveCurrency === 'USD'
+    ? Number((mockOrder.totalPrice / 135).toFixed(2))
+    : testEffectiveCurrency === 'EUR'
+      ? Number((mockOrder.totalPrice / 145).toFixed(2))
+      : mockOrder.totalPrice;
+
   // Env-only auth: no hardcoded fallback. Without a token the endpoint
   // returns a simulated payload so connectivity can be tested safely.
   const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
@@ -133,17 +144,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ...(testFbc ? { fbc: testFbc } : {}),
       };
 
-      const customData = {
-        currency: 'DZD',
-        value: mockOrder.totalPrice,
+      const customData: Record<string, unknown> = {
+        currency: testEffectiveCurrency,
+        value: testEffectiveValue,
         order_id: testOrderCode,
         content_name: mockOrder.packageTitle,
         content_type: 'product',
+        original_currency: 'DZD',
+        original_value: mockOrder.totalPrice,
         contents: [
           {
             id: 'theoria_eye_massager_pro',
             quantity: 1,
-            item_price: mockOrder.totalPrice,
+            item_price: testEffectiveValue,
           },
         ],
       };
@@ -183,14 +196,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     testOrder: mockOrder,
     metaResult,
     eventMatchQuality: 9.3,
-    currency: 'DZD',
+    currency: testEffectiveCurrency,
     testEventCode: effectiveTestCode,
-    browserCommandToRun: `fbq('track', 'Purchase', { value: ${mockOrder.totalPrice}, currency: 'DZD', order_id: '${testOrderCode}' }, { eventID: '${testEventId}' });`,
+    browserCommandToRun: `fbq('track', 'Purchase', { value: ${testEffectiveValue}, currency: '${testEffectiveCurrency}', order_id: '${testOrderCode}' }, { eventID: '${testEventId}' });`,
     deduplicationResult: {
       browserReceived: 1,
       serverReceived: 1,
       deduplicatedTotal: 1,
-      currency: 'DZD',
+      currency: testEffectiveCurrency,
       status: '100% MATCH ON event_id: ' + testEventId,
     },
   });

@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { applyCors } from './_cors.js';
 import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
-import { adminCreateOrder, adminDeleteOrder, adminGetOrderByCode, adminListOrders, adminListOrdersSince, adminPatchOrder, isAdminDbConfigured } from './_firestoreAdmin.js';
+import { adminCreateOrder, adminDeleteOrder, adminGetOrderByCode, adminListOrders, adminListOrdersByPhone, adminListOrdersSince, adminPatchOrder, isAdminDbConfigured } from './_firestoreAdmin.js';
 
 interface VercelRequest {
   method?: string;
@@ -37,6 +37,44 @@ const META_PIXEL_ID = '28477410788542282';
 
 function hashSha256(val: string): string {
   return crypto.createHash('sha256').update(val.trim().toLowerCase()).digest('hex');
+}
+
+/** Normalize Algerian phone to 213XXXXXXXXX — must match browser adv.matching. */
+function normalizeDzPhone(phone?: string | null): string {
+  if (!phone) return '';
+  const digits = String(phone).replace(/[^0-9]/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('0')) return `213${digits.substring(1)}`;
+  if (digits.startsWith('213')) return digits;
+  return `213${digits}`;
+}
+
+function splitDzName(fullName?: string | null): { firstName: string; lastName: string } {
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return { firstName: '', lastName: '' };
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+  return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+}
+
+function extractDzWilayaCode(wilaya?: string | null): string {
+  if (!wilaya) return '';
+  const m = String(wilaya).trim().match(/^(\d{2})\b/);
+  return m ? m[1] : '';
+}
+
+/** Real package economics from contentId (single=1/double=2/triple=3). */
+function packageEconomics(contentId?: string | null, totalPrice?: number): {
+  units: number;
+  packageId?: string;
+  originalPrice: number;
+  discountValue: number;
+} {
+  const id = String(contentId || '');
+  const units = id.includes('triple') ? 3 : id.includes('double') ? 2 : 1;
+  const packageId = id.includes('triple') ? 'triple' : id.includes('double') ? 'double' : id.includes('single') ? 'single' : undefined;
+  const originalPrice = id.includes('triple') ? 44700 : id.includes('double') ? 29800 : id.includes('single') ? 14900 : Number(totalPrice) || 0;
+  const discountValue = Math.max(0, originalPrice - (Number(totalPrice) || 0));
+  return { units, packageId, originalPrice, discountValue };
 }
 
 /**
@@ -330,6 +368,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 2) Fast-ack CAPI: short timeout (6s) so slow Meta never holds the
     // customer checkout hostage. Failure here never fails the order.
+    // Reporting currency defaults to USD (fbevents.js rejects DZD); computed
+    // once here so the response metaDeduplication block below can reference it.
+    const orderMetaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+    const orderEffectiveCurrency = orderMetaCurrency === 'DZD' ? 'DZD' : orderMetaCurrency === 'EUR' ? 'EUR' : 'USD';
     const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
     const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
 
@@ -341,8 +383,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       );
     } else {
       try {
+        const normalizedOrderPhone = normalizeDzPhone(cleanPhone);
         const userData: Record<string, unknown> = {
-          ph: [hashSha256(cleanPhone)],
+          ph: [hashSha256(normalizedOrderPhone || cleanPhone)],
           country: [hashSha256('dz')],
           external_id: [hashSha256(orderCode)],
         };
@@ -351,41 +394,70 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const clientUa = (req.headers['user-agent'] as string) || undefined;
         if (clientIp) userData.client_ip_address = clientIp;
         if (clientUa) userData.client_user_agent = clientUa;
-        const nameParts = String(body.customerName).trim().split(/\s+/);
-        if (nameParts[0]) userData.fn = [hashSha256(nameParts[0])];
-        if (nameParts.length > 1) userData.ln = [hashSha256(nameParts.slice(1).join(' '))];
-        if (body.wilaya) userData.st = [hashSha256(body.wilaya)];
-        if (body.commune) userData.ct = [hashSha256(body.commune)];
+        const { firstName: ordFn, lastName: ordLn } = splitDzName(body.customerName);
+        if (ordFn) userData.fn = [hashSha256(ordFn)];
+        if (ordLn) userData.ln = [hashSha256(ordLn)];
+        if (body.wilaya) userData.st = [hashSha256(String(body.wilaya))];
+        if (body.commune) userData.ct = [hashSha256(String(body.commune))];
         if (resolvedFbp) userData.fbp = resolvedFbp;
         if (resolvedFbc) userData.fbc = resolvedFbc;
 
-        // Meta CAPI standard currency conversion: USD is the primary accepted currency for Algerian Ad accounts & fbevents.js
-        const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'DZD').toUpperCase();
-        const effectiveCurrency = metaCurrency === 'DZD' ? 'DZD' : (metaCurrency === 'EUR' ? 'EUR' : 'USD');
+        // Meta CAPI currency: fbevents.js rejects DZD ("Parameter 'currency' is
+        // invalid"), so default reporting currency is USD (÷135) to match the
+        // browser leg. True charged DZD is kept in original_* fields.
+        // (orderMetaCurrency/orderEffectiveCurrency computed above; reused here.)
+        const metaCurrency = orderMetaCurrency;
+        const effectiveCurrency = orderEffectiveCurrency;
         const effectiveValue = effectiveCurrency === 'USD'
           ? Number((newOrder.totalPrice / 135).toFixed(2))
           : (effectiveCurrency === 'EUR' ? Number((newOrder.totalPrice / 145).toFixed(2)) : newOrder.totalPrice);
 
+        // Real package economics + geo (mirrors the browser Purchase leg).
         const orderContentId = (newOrder as Record<string, unknown>).contentId as string | undefined;
         const contentIds = [orderContentId || 'theoria_eye_massager_pro'];
-        const customData = {
+        const econ = packageEconomics(orderContentId, newOrder.totalPrice);
+        const wilayaCode = extractDzWilayaCode(newOrder.wilaya);
+        // Repeat-buyer value signal (best-effort Firestore lookup, never blocks).
+        let predictedLtvDzd = Number(newOrder.totalPrice) || 0;
+        try {
+          const priors = await adminListOrdersByPhone(normalizedOrderPhone || cleanPhone, 20);
+          const filtered = priors.filter((p) => p?.orderCode !== orderCode);
+          if (filtered.length) {
+            const spent = filtered.reduce((s, p) => s + (Number(p?.totalPrice) || 0), 0);
+            predictedLtvDzd = spent + (Number(newOrder.totalPrice) || 0);
+          }
+        } catch {
+          // ignore — predicted_ltv falls back to current value
+        }
+        const predictedLtv = effectiveCurrency === 'USD'
+          ? Number((predictedLtvDzd / 135).toFixed(2))
+          : effectiveCurrency === 'EUR'
+            ? Number((predictedLtvDzd / 145).toFixed(2))
+            : predictedLtvDzd;
+        const customData: Record<string, unknown> = {
           currency: effectiveCurrency,
           value: effectiveValue,
           order_id: orderCode,
           content_name: newOrder.packageTitle,
           content_ids: contentIds,
           content_type: 'product',
-          num_items: 1,
+          content_category: 'eye_care_device',
+          num_items: econ.units,
           original_currency: 'DZD',
           original_value: newOrder.totalPrice,
+          discount_value: econ.discountValue,
+          shipping_value: 0,
+          predicted_ltv: predictedLtv,
           contents: [
             {
               id: contentIds[0],
-              quantity: 1,
+              quantity: econ.units,
               item_price: effectiveValue,
             },
           ],
         };
+        if (econ.packageId) customData.package_id = econ.packageId;
+        if (wilayaCode) customData.wilaya_code = wilayaCode;
 
         // event_source_url mirrors the browser's thank-you URL (with test code
         // when present) — full parity with the browser leg. Canonical host
@@ -471,7 +543,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       metaDeduplication: {
         eventId,
         pixelId: META_PIXEL_ID,
-        currency: 'DZD',
+        currency: orderEffectiveCurrency,
         testEventCode: testEventCode ? String(testEventCode).trim() : null,
         capiStatus: newOrder.capiStatus,
       },

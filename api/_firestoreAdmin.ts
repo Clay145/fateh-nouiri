@@ -154,6 +154,30 @@ export async function adminListOrders(limit = 250): Promise<any[]> {
   }
 }
 
+/** Repeat-buyer lookup for predicted_ltv: prior orders sharing a normalized phone. */
+export async function adminListOrdersByPhone(phone: string, limit = 20): Promise<any[]> {
+  const adb = getAdminDb();
+  if (!adb || !phone) return [];
+  const digits = String(phone).replace(/[^0-9]/g, '');
+  const variants = Array.from(
+    new Set([String(phone).trim(), digits, digits.startsWith('0') ? `213${digits.substring(1)}` : digits])
+  ).filter(Boolean);
+  try {
+    const seen = new Map<string, any>();
+    for (const v of variants.slice(0, 3)) {
+      const snap = await adb.collection('orders').where('phone', '==', v).limit(limit).get();
+      snap.docs.forEach((d) => {
+        if (!seen.has(d.id)) seen.set(d.id, { ...d.data(), id: d.id });
+      });
+      if (seen.size >= limit) break;
+    }
+    return Array.from(seen.values()).slice(0, limit);
+  } catch (err) {
+    console.warn('[FirestoreAdmin] listOrdersByPhone failed:', (err as Error)?.message || err);
+    return [];
+  }
+}
+
 /** Incremental list for dashboard polling: only orders newer than `since` (createdAt ms). */
 export async function adminListOrdersSince(since = 0, limit = 100): Promise<any[]> {
   const adb = getAdminDb();

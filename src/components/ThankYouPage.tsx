@@ -10,7 +10,8 @@ import {
   Layers,
   Sparkles,
 } from 'lucide-react';
-import { getMetaConversionAmount, trackPurchase, setAdvancedMatching, hasPurchaseFired } from '../utils/pixel';
+import { getMetaConversionAmount, trackPurchase, setAdvancedMatching, hasPurchaseFired, extractWilayaCode } from '../utils/pixel';
+import { STORE_PACKAGES } from '../data/packages';
 
 interface VerificationResult {
   valid: boolean;
@@ -196,12 +197,24 @@ export const ThankYouPage: React.FC = () => {
           // Advanced Matching from the locally stored order (covers direct
           // thank-you landings where the submit-time call never ran in this browser)
           let storedContentIds: string[] | undefined;
+          let purchaseUnits: number | undefined;
+          let purchasePackageId: string | undefined;
+          let purchaseDiscount: number | undefined;
+          let purchaseWilayaCode: string | undefined;
           try {
             const storedRaw = localStorage.getItem(`theoria_order_${ORDER_ID}`);
             if (storedRaw) {
               const stored = JSON.parse(storedRaw);
               const storedName = String(stored.customerName || data.customerName || '').split(/\s+/);
               if (stored.contentId) storedContentIds = [String(stored.contentId)];
+              // Real economics for the browser Purchase leg (mirrors server CAPI).
+              const pkg = STORE_PACKAGES.find((p) => p.contentId === stored.contentId);
+              if (pkg) {
+                purchaseUnits = pkg.units;
+                purchasePackageId = pkg.id;
+                purchaseDiscount = Math.max(0, (pkg.originalPrice || 0) - (pkg.price || 0));
+              }
+              purchaseWilayaCode = extractWilayaCode(String(stored.wilaya || data.wilaya || '')) || undefined;
               setAdvancedMatching({
                 email: stored.email || undefined,
                 phone: stored.phone || undefined,
@@ -209,6 +222,8 @@ export const ThankYouPage: React.FC = () => {
                 lastName: storedName.slice(1).join(' ') || undefined,
                 externalId: ORDER_ID,
               });
+            } else {
+              purchaseWilayaCode = extractWilayaCode(String(data.wilaya || '')) || undefined;
             }
           } catch {
             // ignore
@@ -222,6 +237,10 @@ export const ThankYouPage: React.FC = () => {
             content_name: data.packageTitle || 'جهاز مساج واسترخاء العينين Theoria',
             test_event_code: effectiveTestEventCode,
             content_ids: storedContentIds,
+            packageId: purchasePackageId,
+            units: purchaseUnits,
+            discountValue: purchaseDiscount,
+            wilayaCode: purchaseWilayaCode,
           });
 
           // حفظ في sessionStorage لمنع الإطلاق عند أي Refresh
