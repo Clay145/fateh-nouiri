@@ -6,28 +6,37 @@ import { Firestore, getFirestore } from 'firebase-admin/firestore';
  * Lets admin-gated endpoints read the durable `orders` collection after
  * Firestore rules are locked down for web clients (create-only).
  *
- * Credentials (any one of):
- * - FIREBASE_SERVICE_ACCOUNT_JSON: full service-account JSON (preferred)
- * - FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY
- * Optional: FIRESTORE_DATABASE_ID (defaults to the Theoria database).
+ * Canonical backend (unified client+server):
+ * - project: theoria-store-24aa3
+ * - database: ai-studio-theoria-c8e9318c-768a-45a3-a424-f43b64f7ef3c
  *
- * All helpers fail soft (null/false) when unconfigured so endpoints can
- * fall back to in-memory state with a clear log line.
+ * Credentials (any one of):
+ * - FIREBASE_SERVICE_ACCOUNT_JSON: full service-account JSON (preferred,
+ *   its `project_id` must be theoria-store-24aa3)
+ * - FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY
+ * Optional: FIRESTORE_DATABASE_ID (defaults to the canonical named database;
+ * never set it to `(default)` — orders do not live there).
+ *
+ * All helpers fail soft (null/false/[]) when unconfigured so endpoints can
+ * fall back to in-memory state with a clear log line. There is deliberately
+ * NO fallback to the `(default)` database: silently reading another (usually
+ * empty) DB masked the 5 NOT_FOUND misconfiguration and split reads from
+ * writes. Misconfig must fail loud via logs + getFirestoreDiagnostics().
  */
 
 const DEFAULT_DATABASE_ID = 'ai-studio-theoria-c8e9318c-768a-45a3-a424-f43b64f7ef3c';
-const EXPECTED_PROJECT_ID = 'charged-flux-nghtt';
+const EXPECTED_PROJECT_ID = 'theoria-store-24aa3';
 
 let db: Firestore | null = null;
-let fallbackDb: Firestore | null = null;
 let initAttempted = false;
-let fallbackAttempted = false;
 let initLogged = false;
 let effectiveProjectId = '';
 let effectiveDatabaseId = '';
 let lastErrorCode: string | number | null = null;
 let lastErrorMessage: string | null = null;
 let lastErrorOp: string | null = null;
+let lastNotFoundHintAt = 0;
+const NOT_FOUND_HINT_THROTTLE_MS = 60_000;
 
 function getErrorCode(err: any): string | number | null {
   if (err == null) return null;
@@ -65,11 +74,19 @@ function recordError(op: string, err: any) {
   lastErrorMessage = (err as Error)?.message || String(err);
   console.warn(`[FirestoreAdmin] ${op} failed:`, formatFirestoreError(err));
   if (isNotFoundError(err)) {
+    // Dashboard polls every ~15s; throttle the (long) hint so one outage
+    // doesn't spam two lines per poll (listOrdersSince -> listOrders).
+    const now = Date.now();
+    if (now - lastNotFoundHintAt < NOT_FOUND_HINT_THROTTLE_MS) return;
+    lastNotFoundHintAt = now;
     console.warn(
-      `[FirestoreAdmin] NOT_FOUND hint: service-account project must be "${EXPECTED_PROJECT_ID}" ` +
-        `and FIRESTORE_DATABASE_ID must name an existing DB (expected "${DEFAULT_DATABASE_ID}"). ` +
-        `Check Vercel env FIREBASE_SERVICE_ACCOUNT_JSON project_id + FIRESTORE_DATABASE_ID, ` +
-        `and Firebase console > ${EXPECTED_PROJECT_ID} > Firestore Database list.`
+      `[FirestoreAdmin] NOT_FOUND: database "${effectiveDatabaseId || DEFAULT_DATABASE_ID}" not found ` +
+        `under project "${effectiveProjectId || 'unknown'}". Canonical backend is ` +
+        `project="${EXPECTED_PROJECT_ID}" database="${DEFAULT_DATABASE_ID}". ` +
+        `Fix: 1) Firebase console > ${EXPECTED_PROJECT_ID} > Firestore Database — the named DB must exist. ` +
+        `2) Vercel env FIREBASE_SERVICE_ACCOUNT_JSON project_id must be "${EXPECTED_PROJECT_ID}". ` +
+        `3) FIRESTORE_DATABASE_ID must be unset or exactly "${DEFAULT_DATABASE_ID}" (never "(default)"). ` +
+        `4) Enable Firestore API + grant the service account Cloud Datastore User.`
     );
   }
 }
@@ -130,41 +147,20 @@ export function getAdminDb(): Firestore | null {
       console.log(`[FirestoreAdmin] Init ok: project=${effectiveProjectId || 'unknown'} database=${effectiveDatabaseId}`);
       if (effectiveProjectId && effectiveProjectId !== EXPECTED_PROJECT_ID) {
         console.warn(
-          `[FirestoreAdmin] Project mismatch: service-account project="${effectiveProjectId}" but expected="${EXPECTED_PROJECT_ID}". ` +
-            `listOrders will return 5 NOT_FOUND until FIREBASE_SERVICE_ACCOUNT_JSON is replaced.`
+          `[FirestoreAdmin] Project mismatch: service-account project="${effectiveProjectId}" but canonical="${EXPECTED_PROJECT_ID}". ` +
+            `Reads/writes will 5 NOT_FOUND until FIREBASE_SERVICE_ACCOUNT_JSON is replaced with a ${EXPECTED_PROJECT_ID} key.`
         );
       }
-      if (effectiveDatabaseId === '(default)') {
+      if (effectiveDatabaseId !== DEFAULT_DATABASE_ID) {
         console.warn(
-          `[FirestoreAdmin] FIRESTORE_DATABASE_ID=(default) but Theoria orders live in named DB "${DEFAULT_DATABASE_ID}". ` +
-            `Unset FIRESTORE_DATABASE_ID or set it to the named DB id unless you migrated to (default).`
+          `[FirestoreAdmin] Database mismatch: using "${effectiveDatabaseId}" but canonical="${DEFAULT_DATABASE_ID}". ` +
+            `Unset FIRESTORE_DATABASE_ID unless you intentionally migrated.`
         );
       }
     }
     return db;
   } catch (err) {
     console.warn('[FirestoreAdmin] Init failed:', formatFirestoreError(err));
-    return null;
-  }
-}
-
-/** Lazily open the `(default)` database as a read fallback when the named DB 404s. */
-function getFallbackDb(): Firestore | null {
-  const primary = getAdminDb();
-  if (!primary) return null;
-  if (effectiveDatabaseId === '(default)') return null;
-  if (fallbackDb) return fallbackDb;
-  if (fallbackAttempted) return null;
-  fallbackAttempted = true;
-  try {
-    const app = getApps()[0];
-    if (!app) return null;
-    fallbackDb = getFirestore(app, '(default)');
-    fallbackDb.settings({ ignoreUndefinedProperties: true });
-    console.warn('[FirestoreAdmin] Fallback DB opened: database=(default) (used only after primary NOT_FOUND).');
-    return fallbackDb;
-  } catch (err) {
-    console.warn('[FirestoreAdmin] Fallback DB init failed:', formatFirestoreError(err));
     return null;
   }
 }
@@ -203,21 +199,6 @@ export async function adminGetOrderByCode(orderCode: string): Promise<any | null
     if (byId.exists) return { ...byId.data(), id: byId.id };
   } catch (err) {
     recordError('getOrder', err);
-    if (isNotFoundError(err)) {
-      const fb = getFallbackDb();
-      if (fb) {
-        try {
-          const byCode = await fb.collection('orders').where('orderCode', '==', orderCode).limit(1).get();
-          if (!byCode.empty) {
-            const doc = byCode.docs[0];
-            console.warn('[FirestoreAdmin] getOrder recovered via (default) fallback DB.');
-            return { ...doc.data(), id: doc.id };
-          }
-        } catch (fbErr) {
-          recordError('getOrder(fallback)', fbErr);
-        }
-      }
-    }
   }
   return null;
 }
@@ -274,10 +255,15 @@ export async function adminCreateOrder(order: Record<string, unknown>): Promise<
     await adb.collection('orders').doc(String(docId)).set(order, { merge: true });
     return true;
   } catch (err) {
-    // No fallback write: falling back to (default) would split the dataset.
     recordError('createOrder', err);
     return false;
   }
+}
+
+/** Raw recent-orders query against the already-opened canonical DB (no error logging here). */
+async function queryRecentOrders(adb: Firestore, limit: number): Promise<any[]> {
+  const snap = await adb.collection('orders').orderBy('createdAt', 'desc').limit(limit).get();
+  return snap.docs.map((d) => ({ ...d.data(), id: d.id }));
 }
 
 /** List recent orders (admin dashboard cross-device reads). */
@@ -285,22 +271,9 @@ export async function adminListOrders(limit = 250): Promise<any[]> {
   const adb = getAdminDb();
   if (!adb) return [];
   try {
-    const snap = await adb.collection('orders').orderBy('createdAt', 'desc').limit(limit).get();
-    return snap.docs.map((d) => ({ ...d.data(), id: d.id }));
+    return await queryRecentOrders(adb, limit);
   } catch (err) {
     recordError('listOrders', err);
-    if (isNotFoundError(err)) {
-      const fb = getFallbackDb();
-      if (fb) {
-        try {
-          const snap = await fb.collection('orders').orderBy('createdAt', 'desc').limit(limit).get();
-          console.warn('[FirestoreAdmin] listOrders recovered via (default) fallback DB.');
-          return snap.docs.map((d) => ({ ...d.data(), id: d.id }));
-        } catch (fbErr) {
-          recordError('listOrders(fallback)', fbErr);
-        }
-      }
-    }
     return [];
   }
 }
@@ -313,33 +286,18 @@ export async function adminListOrdersByPhone(phone: string, limit = 20): Promise
   const variants = Array.from(
     new Set([String(phone).trim(), digits, digits.startsWith('0') ? `213${digits.substring(1)}` : digits])
   ).filter(Boolean);
-  const queryDb = async (target: Firestore): Promise<any[]> => {
+  try {
     const seen = new Map<string, any>();
     for (const v of variants.slice(0, 3)) {
-      const snap = await target.collection('orders').where('phone', '==', v).limit(limit).get();
+      const snap = await adb.collection('orders').where('phone', '==', v).limit(limit).get();
       snap.docs.forEach((d) => {
         if (!seen.has(d.id)) seen.set(d.id, { ...d.data(), id: d.id });
       });
       if (seen.size >= limit) break;
     }
     return Array.from(seen.values()).slice(0, limit);
-  };
-  try {
-    return await queryDb(adb);
   } catch (err) {
     recordError('listOrdersByPhone', err);
-    if (isNotFoundError(err)) {
-      const fb = getFallbackDb();
-      if (fb) {
-        try {
-          const rows = await queryDb(fb);
-          console.warn('[FirestoreAdmin] listOrdersByPhone recovered via (default) fallback DB.');
-          return rows;
-        } catch (fbErr) {
-          recordError('listOrdersByPhone(fallback)', fbErr);
-        }
-      }
-    }
     return [];
   }
 }
@@ -358,15 +316,25 @@ export async function adminListOrdersSince(since = 0, limit = 100): Promise<any[
     return snap.docs.map((d) => ({ ...d.data(), id: d.id }));
   } catch (err) {
     if (isNotFoundError(err)) {
-      // Missing DB — delegate to adminListOrders which already tries the fallback.
+      // Missing DB — log once here; fall back to the plain list inline
+      // (calling adminListOrders would log the same NOT_FOUND a second time
+      // on every 15s dashboard poll).
       recordError('listOrdersSince', err);
-      const all = await adminListOrders(limit);
-      return since > 0 ? all.filter((o) => Number(o?.createdAt || 0) > since) : all;
+      try {
+        const all = await queryRecentOrders(adb, limit);
+        return since > 0 ? all.filter((o) => Number(o?.createdAt || 0) > since) : all;
+      } catch (inner) {
+        return [];
+      }
     }
     // Composite where+orderBy may need an index on older DBs — fall back to
     // full list + in-memory filter so incremental polling never breaks.
     recordError('listOrdersSince fallback to listOrders', err);
-    const all = await adminListOrders(limit);
-    return since > 0 ? all.filter((o) => Number(o?.createdAt || 0) > since) : all;
+    try {
+      const all = await queryRecentOrders(adb, limit);
+      return since > 0 ? all.filter((o) => Number(o?.createdAt || 0) > since) : all;
+    } catch {
+      return [];
+    }
   }
 }
