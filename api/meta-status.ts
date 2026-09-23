@@ -16,6 +16,7 @@ interface VercelResponse {
 // Admin-only Meta status (contains order metadata — never public).
 import { applyCors } from './_cors.js';
 import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
+import { getMetaTokenHealth } from './_metaToken.js';
 
 declare global {
   var __THEORIA_ORDERS__: any[] | undefined;
@@ -24,7 +25,7 @@ declare global {
 const META_PIXEL_ID = '28477410788542282';
 const PURGED_TEST_PIXEL_IDS = ['1699977874052309', '1400263654406240', '1961559868019808'];
 
-export default function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (applyCors(req, res, 'GET,OPTIONS')) return res;
 
   const adminToken = extractBearerToken(req.headers, req.query);
@@ -34,6 +35,9 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
 
   const orders = global.__THEORIA_ORDERS__ || [];
   const testEventCode = process.env.META_TEST_EVENT_CODE || process.env.TEST_EVENT_CODE || null;
+  // Live token check (cached 60s, never throws): surfaces a dead/invalidated
+  // CAPI token in the dashboard instead of hiding it behind hasAccessToken.
+  const tokenHealth = await getMetaTokenHealth();
 
   return res.status(200).json({
     success: true,
@@ -41,6 +45,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     pixelName: 'pixel theoria',
     purgedPixels: PURGED_TEST_PIXEL_IDS,
     hasAccessToken: Boolean(process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN),
+    tokenHealth,
     testEventCode,
     currency: 'DZD',
     processedCapiCount: orders.length,

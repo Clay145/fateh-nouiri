@@ -24,6 +24,12 @@ interface MetaStatusData {
   pixelName: string;
   purgedPixels: string[];
   hasAccessToken: boolean;
+  tokenHealth: {
+    configured: boolean;
+    valid: boolean | null;
+    reason: string | null;
+    checkedAt: number;
+  } | null;
   testEventCode: string | null;
   processedCapiCount: number;
   recentEvents: Array<{
@@ -76,6 +82,7 @@ export const MetaPixelDiagnosticView: React.FC = () => {
           pixelName: 'pixel theoria',
           purgedPixels: ['1699977874052309', '1400263654406240', '1961559868019808'],
           hasAccessToken: false,
+          tokenHealth: null,
           testEventCode: null,
           processedCapiCount: 0,
           recentEvents: [],
@@ -96,6 +103,7 @@ export const MetaPixelDiagnosticView: React.FC = () => {
         pixelName: 'pixel theoria',
         purgedPixels: ['1699977874052309', '1400263654406240', '1961559868019808'],
         hasAccessToken: false,
+        tokenHealth: null,
         testEventCode: null,
         processedCapiCount: 0,
         recentEvents: [],
@@ -188,6 +196,34 @@ export const MetaPixelDiagnosticView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* CAPI token health banner — dead token blinds all server events */}
+      {metaStatus?.tokenHealth && metaStatus.tokenHealth.valid === false && (
+        <div className="bg-rose-950/40 border-2 border-rose-500/40 rounded-3xl p-5 sm:p-6 shadow-xl flex items-start gap-3" dir="rtl">
+          <AlertTriangle className="w-6 h-6 text-rose-400 shrink-0 mt-0.5" />
+          <div className="text-xs sm:text-sm">
+            <p className="font-black text-rose-300">
+              رمز وصول CAPI غير صالح — أحداث الخادم لا تصل إلى Meta
+              {metaStatus.tokenHealth.reason && (
+                <span className="font-mono text-[11px] text-rose-400"> ({metaStatus.tokenHealth.reason})</span>
+              )}
+            </p>
+            <p className="text-rose-200/80 mt-1 leading-relaxed">
+              الخطأ 190 يعني إبطال الرمز (تغيير كلمة المرور أو تدوير الجلسة). الحل: Business Settings ← System Users ← توليد رمز جديد بصلاحية ads_management، ثم تحديث
+              <code className="font-mono text-rose-300"> META_CONVERSIONS_API_ACCESS_TOKEN </code>
+              في Vercel وإعادة النشر. رموز System User بلا كلمة مرور ومحصنة ضد هذا العطل.
+            </p>
+          </div>
+        </div>
+      )}
+      {metaStatus?.tokenHealth && metaStatus.tokenHealth.valid === null && metaStatus.tokenHealth.configured && (
+        <div className="bg-amber-950/30 border border-amber-500/30 rounded-3xl p-4 sm:p-5 shadow-xl flex items-start gap-3" dir="rtl">
+          <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-200/90">
+            تعذّر التحقق من صلاحية رمز CAPI ({metaStatus.tokenHealth.reason || 'unknown'}) — تحقق من سجلات Vercel.
+          </p>
+        </div>
+      )}
 
       {/* Overview Stat Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

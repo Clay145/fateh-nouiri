@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { applyCors } from './_cors.js';
 import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
 import { adminCreateOrder, adminDeleteOrder, adminGetOrderByCode, adminListOrders, adminListOrdersByPhone, adminListOrdersSince, adminPatchOrder, getFirestoreDiagnostics, isAdminDbConfigured } from './_firestoreAdmin.js';
+import { reportMetaTokenIfInvalid } from './_metaToken.js';
 
 interface VercelRequest {
   method?: string;
@@ -509,6 +510,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             newOrder.capiStatus = 'sent';
           } else {
             console.error(`[Meta CAPI Error] Meta Graph API returned error:`, JSON.stringify(metaData?.error || metaData));
+            // Dead token (190): order stays durable, only CAPI is blind until
+            // the token is regenerated — actionable log fires inside (throttled).
+            reportMetaTokenIfInvalid(metaData, `Purchase ${orderCode}`);
           }
         } finally {
           clearTimeout(capiTimeout);

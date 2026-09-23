@@ -13,6 +13,7 @@ import {
   verifyAdminPassword,
   verifyAdminToken,
 } from './api/_adminAuth';
+import { reportMetaTokenIfInvalid } from './api/_metaToken';
 
 interface OrderItem {
   id: string;
@@ -301,7 +302,10 @@ async function processMetaCapiStandardEvent(params: {
       });
       const result = await response.json().catch(() => null);
       console.log(`[Meta CAPI] ${params.eventName} event_id=${params.eventId} test_event_code=${params.testEventCode || 'none'} status=${response.status}`, JSON.stringify(result));
-      if (!response.ok) console.error('[Meta CAPI] FB Error Body:', result);
+      if (!response.ok) {
+        console.error('[Meta CAPI] FB Error Body:', result);
+        reportMetaTokenIfInvalid(result, `${params.eventName} ${params.eventId}`);
+      }
     } finally {
       clearTimeout(stdTimeout);
     }
@@ -514,6 +518,7 @@ async function processMetaCapiPurchase(
       } else {
         responseText = `Meta Graph API Notice: ${JSON.stringify(resJson)}`;
         console.error(`[Meta CAPI Error] Meta API Error for order ${orderCode}:`, JSON.stringify(resJson?.error || resJson));
+        reportMetaTokenIfInvalid(resJson, `Purchase ${orderCode}`);
       }
     } catch (err: any) {
       console.error('[Meta CAPI Request Failed]', err?.message || err);

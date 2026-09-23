@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { applyCors } from './_cors.js';
 import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
+import { reportMetaTokenIfInvalid } from './_metaToken.js';
 
 interface VercelRequest {
   method?: string;
@@ -367,6 +368,9 @@ async function sendCapiStandardEvent(params: {
     console.log(`[Meta CAPI] ${params.eventName} ${params.eventId} -> ${res.status}`, JSON.stringify(data));
     if (!res.ok) {
       console.error('[Meta CAPI] FB Error Body:', data);
+      // Dead token (190) is claimed, not retried — regenerating the token is
+      // the only fix; the throttled actionable log fires inside.
+      reportMetaTokenIfInvalid(data, `${params.eventName} ${params.eventId}`);
       if (res.status >= 400 && res.status < 500) {
         // Definitive Meta rejection — retrying won't help. Claim the key.
         global.__THEORIA_CAPI_SENT__?.add(key);
