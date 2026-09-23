@@ -120,12 +120,15 @@ const STEP_WEIGHT: Record<string, number> = {
 };
 
 // --- Meta Conversions API (server events for standard funnel steps) ---
-// Mirrors server.ts processMetaCapiStandardEvent. Fire-and-forget: never blocks the response.
-// Serverless instances are stateless, so this is best-effort on top of Meta event_id dedup.
+// Mirrors server.ts processMetaCapiStandardEvent. Awaited with a bounded 10s
+// timeout so Vercel can't freeze the function mid-flight (which aborted the
+// Meta request). Serverless instances are stateless, so this is best-effort
+// on top of Meta event_id dedup.
 type CapiStandardName = 'ViewContent' | 'AddToCart' | 'InitiateCheckout' | 'PageView' | 'Lead';
 
 declare global {
   var __THEORIA_CAPI_SENT__: Set<string> | undefined;
+  var __THEORIA_CAPI_INFLIGHT__: Set<string> | undefined;
   var __THEORIA_FIELD_TOUCHES__: Set<string> | undefined;
 }
 
@@ -253,9 +256,14 @@ async function sendCapiStandardEvent(params: {
   dwellS?: number;
 }): Promise<void> {
   if (!global.__THEORIA_CAPI_SENT__) global.__THEORIA_CAPI_SENT__ = new Set<string>();
+  if (!global.__THEORIA_CAPI_INFLIGHT__) global.__THEORIA_CAPI_INFLIGHT__ = new Set<string>();
   const key = `${params.eventName}|${params.eventId}`;
-  if (global.__THEORIA_CAPI_SENT__.has(key)) return;
-  global.__THEORIA_CAPI_SENT__.add(key);
+  if (global.__THEORIA_CAPI_SENT__.has(key) || global.__THEORIA_CAPI_INFLIGHT__.has(key)) return;
+  // In-flight guard only — the SENT claim happens after a definitive outcome
+  // (success or 4xx rejection). Aborts/network/5xx release the key so the
+  // next beacon retries with the same event_id (Meta dedupes by event_id,
+  // so a retry can never double-count).
+  global.__THEORIA_CAPI_INFLIGHT__.add(key);
   if (global.__THEORIA_CAPI_SENT__.size > 500) {
     const first = global.__THEORIA_CAPI_SENT__.values().next().value;
     if (first) global.__THEORIA_CAPI_SENT__.delete(first);
@@ -335,7 +343,18 @@ async function sendCapiStandardEvent(params: {
   if (params.testEventCode) payload.test_event_code = params.testEventCode;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+  // 10s: Meta Graph API routinely exceeds 5s from serverless regions; the old
+  // 5s timer manufactured AbortErrors (and the event was then wrongly marked
+  // sent, so it was lost forever).
+  const timeout = setTimeout(() => controller.abort(), 10000);
+
+  const releaseInflight = () => {
+    global.__THEORIA_CAPI_INFLIGHT__?.delete(key);
+    if (global.__THEORIA_CAPI_INFLIGHT__ && global.__THEORIA_CAPI_INFLIGHT__.size > 500) {
+      const first = global.__THEORIA_CAPI_INFLIGHT__.values().next().value;
+      if (first) global.__THEORIA_CAPI_INFLIGHT__.delete(first);
+    }
+  };
 
   try {
     const res = await fetch(`https://graph.facebook.com/v20.0/${pixelId}/events?access_token=${accessToken}`, {
@@ -346,8 +365,29 @@ async function sendCapiStandardEvent(params: {
     });
     const data = await res.json().catch(() => null);
     console.log(`[Meta CAPI] ${params.eventName} ${params.eventId} -> ${res.status}`, JSON.stringify(data));
-    if (!res.ok) console.error('[Meta CAPI] FB Error Body:', data);
+    if (!res.ok) {
+      console.error('[Meta CAPI] FB Error Body:', data);
+      if (res.status >= 400 && res.status < 500) {
+        // Definitive Meta rejection — retrying won't help. Claim the key.
+        global.__THEORIA_CAPI_SENT__?.add(key);
+        releaseInflight();
+        return;
+      }
+      // 5xx/429: fall through to release for retry on the next beacon.
+      releaseInflight();
+      return;
+    }
+    global.__THEORIA_CAPI_SENT__?.add(key);
+    releaseInflight();
   } catch (err: any) {
+    // Abort (Meta slower than timeout, or instance frozen mid-flight):
+    // release the key so the next beacon retries with the same event_id.
+    // Downgraded to warn — this is recoverable, not a bug.
+    releaseInflight();
+    if (err?.name === 'AbortError') {
+      console.warn(`[Meta CAPI] ${params.eventName} ${params.eventId} timed out, will retry on next beacon.`);
+      return;
+    }
     console.error(`[Meta CAPI] ${params.eventName} request failed:`, err?.message, 'cause:', err?.cause, 'stack:', err?.stack);
   } finally {
     clearTimeout(timeout);
@@ -360,7 +400,7 @@ const FUNNEL_TO_CAPI: Record<string, CapiStandardName> = {
   initiate_checkout: 'InitiateCheckout',
 };
 
-export default function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (applyCors(req, res, 'GET,OPTIONS,POST')) return res;
 
   let stats = loadStatsFromDisk();
@@ -469,7 +509,9 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
         (body.fbclid ? String(body.fbclid) : undefined);
       const validatedFbc = sanitizeAndValidateFbc((body.fbc ? String(body.fbc) : undefined) || rawCookieFbc, fbclidVal);
       const dwellRaw = Number(body.dwellS);
-      sendCapiStandardEvent({
+      // Awaited (bounded 10s inside): fire-and-forget let Vercel freeze the
+      // instance mid-flight, aborting the Meta request with AbortError.
+      await sendCapiStandardEvent({
         eventName: resolvedCapiName,
         eventId: capiEventId,
         value: Number(body.value ?? body.totalPrice) || 9500,
