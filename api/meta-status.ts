@@ -35,9 +35,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const orders = global.__THEORIA_ORDERS__ || [];
   const testEventCode = process.env.META_TEST_EVENT_CODE || process.env.TEST_EVENT_CODE || null;
-  // Live token check (cached 60s, never throws): surfaces a dead/invalidated
-  // CAPI token in the dashboard instead of hiding it behind hasAccessToken.
-  const tokenHealth = await getMetaTokenHealth();
+  // Live token + pixel-grant check (cached 60s, never throws): surfaces a
+  // dead/invalidated CAPI token or a missing pixel grant in the dashboard
+  // instead of hiding it behind hasAccessToken.
+  const tokenHealth = await getMetaTokenHealth(META_PIXEL_ID);
 
   return res.status(200).json({
     success: true,

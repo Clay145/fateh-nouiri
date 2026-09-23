@@ -28,6 +28,8 @@ interface MetaStatusData {
     configured: boolean;
     valid: boolean | null;
     reason: string | null;
+    pixelAccess: boolean | null;
+    pixelId: string | null;
     checkedAt: number;
   } | null;
   testEventCode: string | null;
@@ -212,6 +214,21 @@ export const MetaPixelDiagnosticView: React.FC = () => {
               الخطأ 190 يعني إبطال الرمز (تغيير كلمة المرور أو تدوير الجلسة). الحل: Business Settings ← System Users ← توليد رمز جديد بصلاحية ads_management، ثم تحديث
               <code className="font-mono text-rose-300"> META_CONVERSIONS_API_ACCESS_TOKEN </code>
               في Vercel وإعادة النشر. رموز System User بلا كلمة مرور ومحصنة ضد هذا العطل.
+            </p>
+          </div>
+        </div>
+      )}
+      {metaStatus?.tokenHealth && metaStatus.tokenHealth.pixelAccess === false && (
+        <div className="bg-orange-950/40 border-2 border-orange-500/40 rounded-3xl p-5 sm:p-6 shadow-xl flex items-start gap-3" dir="rtl">
+          <AlertTriangle className="w-6 h-6 text-orange-400 shrink-0 mt-0.5" />
+          <div className="text-xs sm:text-sm">
+            <p className="font-black text-orange-300">
+              الرمز صالح لكن بلا صلاحية على البيكسل {metaStatus.tokenHealth.pixelId || ''} — أحداث الخادم تُرفض (100/33)
+            </p>
+            <p className="text-orange-200/80 mt-1 leading-relaxed">
+              الحل: Business Settings ← System Users ← اختيار المستخدم ← Add Assets ← مجموعة البيانات (Manage pixel)، ثم توليد رمز جديد وتحديث
+              <code className="font-mono text-orange-300"> META_CONVERSIONS_API_ACCESS_TOKEN </code>
+              في Vercel وإعادة النشر.
             </p>
           </div>
         </div>

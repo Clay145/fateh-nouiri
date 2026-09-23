@@ -287,20 +287,40 @@ export function getFirestoreDiagnostics(): Record<string, unknown> {
 
 /** Find one order by orderCode (or document id fallback). */
 export async function adminGetOrderByCode(orderCode: string): Promise<any | null> {
+  const r = await adminGetOrderByCodeStrict(orderCode);
+  return r.status === 'found' ? r.order : null;
+}
+
+export type OrderLookupResult =
+  | { status: 'found'; order: any }
+  | { status: 'missing' }
+  | { status: 'unavailable'; error: string }
+  | { status: 'unconfigured' };
+
+/**
+ * Strict single-order lookup that distinguishes a clean miss from a store
+ * outage. Clean miss (empty query + absent doc, no throw) -> 'missing'.
+ * Transport failure (throw, e.g. 5 NOT_FOUND on the DB itself, 7 denied,
+ * network) -> 'unavailable'. No DB configured -> 'unconfigured'.
+ * Callers must map: found -> 200 path, missing -> 404, unavailable -> 503
+ * with diagnostics (never a bare 404 — that lie cost real debugging time).
+ */
+export async function adminGetOrderByCodeStrict(orderCode: string): Promise<OrderLookupResult> {
   const adb = getAdminDb();
-  if (!adb || !orderCode) return null;
+  if (!adb || !orderCode) return adb ? { status: 'missing' } : { status: 'unconfigured' };
   try {
     const byCode = await adb.collection('orders').where('orderCode', '==', orderCode).limit(1).get();
     if (!byCode.empty) {
       const doc = byCode.docs[0];
-      return { ...doc.data(), id: doc.id };
+      return { status: 'found', order: { ...doc.data(), id: doc.id } };
     }
     const byId = await adb.collection('orders').doc(orderCode).get();
-    if (byId.exists) return { ...byId.data(), id: byId.id };
+    if (byId.exists) return { status: 'found', order: { ...byId.data(), id: byId.id } };
+    return { status: 'missing' };
   } catch (err) {
     recordError('getOrder', err);
+    return { status: 'unavailable', error: (err as Error)?.message || String(err) };
   }
-  return null;
 }
 
 /** Mark fb_sent=1 on the durable record. Returns true when persisted. */

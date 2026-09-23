@@ -1,8 +1,8 @@
 import crypto from 'crypto';
 import { applyCors } from './_cors.js';
 import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
-import { adminCreateOrder, adminDeleteOrder, adminGetOrderByCode, adminListOrders, adminListOrdersByPhone, adminListOrdersSince, adminPatchOrder, getFirestoreDiagnostics, isAdminDbConfigured } from './_firestoreAdmin.js';
-import { reportMetaTokenIfInvalid } from './_metaToken.js';
+import { adminCreateOrder, adminDeleteOrder, adminGetOrderByCode, adminGetOrderByCodeStrict, adminListOrders, adminListOrdersByPhone, adminListOrdersSince, adminPatchOrder, getFirestoreDiagnostics, isAdminDbConfigured } from './_firestoreAdmin.js';
+import { reportMetaTokenIfInvalid, reportMetaPixelAccessIfDenied } from './_metaToken.js';
 
 interface VercelRequest {
   method?: string;
@@ -175,11 +175,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (id) {
       const orderId = Array.isArray(id) ? id[0] : id;
-      const order =
-        (global.__THEORIA_ORDERS__ || []).find((o) => o.id === orderId || o.orderCode === orderId) ||
-        (await adminGetOrderByCode(orderId));
-      if (!order) return res.status(404).json({ success: false, error: 'Order not found' });
-      return res.status(200).json({ success: true, order });
+      const memoryHit = (global.__THEORIA_ORDERS__ || []).find((o) => o.id === orderId || o.orderCode === orderId);
+      if (memoryHit) return res.status(200).json({ success: true, order: memoryHit });
+      const lookup = await adminGetOrderByCodeStrict(String(orderId));
+      if (lookup.status === 'found') return res.status(200).json({ success: true, order: lookup.order });
+      if (lookup.status === 'unavailable' || lookup.status === 'unconfigured') {
+        return res.status(503).json({
+          success: false,
+          error: 'Store unreachable — order may exist but Firestore cannot be reached.',
+          firestore: getFirestoreDiagnostics(),
+        });
+      }
+      return res.status(404).json({ success: false, error: 'Order not found' });
     }
 
     // Durable cross-device read: instance memory first, then Firestore.
@@ -513,6 +520,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // Dead token (190): order stays durable, only CAPI is blind until
             // the token is regenerated — actionable log fires inside (throttled).
             reportMetaTokenIfInvalid(metaData, `Purchase ${orderCode}`);
+            reportMetaPixelAccessIfDenied(metaData, `Purchase ${orderCode}`, effectivePixelId);
           }
         } finally {
           clearTimeout(capiTimeout);
@@ -566,14 +574,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Memory is per-instance and evaporates on cold start/scale-out — fall
     // back to the durable Firestore record (same pattern as GET /:id) before
-    // 404ing, then rehydrate memory so later ops hit the fast path.
+    // responding, then rehydrate memory so later ops hit the fast path.
+    // A store outage yields 503 (never a misleading 404).
     if (idx === -1 && targetId) {
-      const durable = await adminGetOrderByCode(String(targetId));
-      if (durable && (durable.id || durable.orderCode)) {
+      const lookup = await adminGetOrderByCodeStrict(String(targetId));
+      if (lookup.status === 'found') {
+        const durable = lookup.order;
         if (!global.__THEORIA_ORDERS__.some((o) => o.id === durable.id || o.orderCode === durable.orderCode)) {
           global.__THEORIA_ORDERS__.unshift(durable);
         }
         idx = global.__THEORIA_ORDERS__.findIndex((o) => o.id === durable.id || o.orderCode === durable.orderCode);
+      } else if (lookup.status === 'unavailable' || lookup.status === 'unconfigured') {
+        return res.status(503).json({
+          success: false,
+          error: 'Store unreachable — order may exist but Firestore cannot be reached. Retry after fixing store connectivity.',
+          firestore: getFirestoreDiagnostics(),
+        });
       }
     }
 
