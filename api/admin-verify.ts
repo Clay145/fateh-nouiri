@@ -1,6 +1,7 @@
 // Vercel Serverless Function compatible types
 import { applyCors } from './_cors.js';
 import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
+import { getFirestoreDiagnostics } from './_firestoreAdmin.js';
 
 interface VercelRequest {
   method?: string;
@@ -23,7 +24,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
   const token = extractBearerToken(req.headers, req.query);
 
   if (token && verifyAdminToken(token)) {
-    return res.status(200).json({ success: true, authenticated: true });
+    return res.status(200).json({ success: true, authenticated: true, firestore: getFirestoreDiagnostics() });
   }
 
   // Intentionally 200 (not 401): this is a session *check*, and "no session"

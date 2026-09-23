@@ -16,9 +16,76 @@ import { Firestore, getFirestore } from 'firebase-admin/firestore';
  */
 
 const DEFAULT_DATABASE_ID = 'ai-studio-theoria-c8e9318c-768a-45a3-a424-f43b64f7ef3c';
+const EXPECTED_PROJECT_ID = 'charged-flux-nghtt';
 
 let db: Firestore | null = null;
+let fallbackDb: Firestore | null = null;
 let initAttempted = false;
+let fallbackAttempted = false;
+let initLogged = false;
+let effectiveProjectId = '';
+let effectiveDatabaseId = '';
+let lastErrorCode: string | number | null = null;
+let lastErrorMessage: string | null = null;
+let lastErrorOp: string | null = null;
+
+function getErrorCode(err: any): string | number | null {
+  if (err == null) return null;
+  if (typeof err.code === 'number' || typeof err.code === 'string') return err.code;
+  const msg = String(err?.message || err);
+  const m = msg.match(/\b(\d)\s+(NOT_FOUND|PERMISSION_DENIED|UNAVAILABLE|UNAUTHENTICATED)\b/);
+  if (m) return Number(m[1]);
+  return null;
+}
+
+function isNotFoundError(err: any): boolean {
+  if (getErrorCode(err) === 5) return true;
+  const msg = String((err as Error)?.message || err || '').toUpperCase();
+  return msg.includes('NOT_FOUND') || msg.includes('DATABASE DOES NOT EXIST');
+}
+
+function formatFirestoreError(err: any): string {
+  const code = getErrorCode(err);
+  const details =
+    (err as any)?.details || (err as any)?.errorInfo?.metadata || (err as any)?.reason || '';
+  const message = (err as Error)?.message || String(err);
+  const parts = [
+    code !== null ? `code=${code}` : null,
+    `project=${effectiveProjectId || 'unknown'}`,
+    `database=${effectiveDatabaseId || 'unknown'}`,
+    `msg=${message}`,
+    details ? `details=${typeof details === 'string' ? details : JSON.stringify(details)}` : null,
+  ].filter(Boolean);
+  return parts.join(' | ');
+}
+
+function recordError(op: string, err: any) {
+  lastErrorOp = op;
+  lastErrorCode = getErrorCode(err);
+  lastErrorMessage = (err as Error)?.message || String(err);
+  console.warn(`[FirestoreAdmin] ${op} failed:`, formatFirestoreError(err));
+  if (isNotFoundError(err)) {
+    console.warn(
+      `[FirestoreAdmin] NOT_FOUND hint: service-account project must be "${EXPECTED_PROJECT_ID}" ` +
+        `and FIRESTORE_DATABASE_ID must name an existing DB (expected "${DEFAULT_DATABASE_ID}"). ` +
+        `Check Vercel env FIREBASE_SERVICE_ACCOUNT_JSON project_id + FIRESTORE_DATABASE_ID, ` +
+        `and Firebase console > ${EXPECTED_PROJECT_ID} > Firestore Database list.`
+    );
+  }
+}
+
+function resolveProjectId(): string {
+  try {
+    const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '';
+    if (rawJson.trim()) {
+      const parsed = JSON.parse(rawJson);
+      if (parsed?.project_id) return String(parsed.project_id);
+    }
+  } catch {
+    // ignore — buildCredential logs the parse error
+  }
+  return process.env.FIREBASE_PROJECT_ID || '';
+}
 
 function buildCredential() {
   try {
@@ -51,19 +118,75 @@ export function getAdminDb(): Firestore | null {
       console.warn('[FirestoreAdmin] No service-account configured (FIREBASE_SERVICE_ACCOUNT_JSON). Server Firestore reads disabled.');
       return null;
     }
-    const databaseId = process.env.FIRESTORE_DATABASE_ID || DEFAULT_DATABASE_ID;
-    const app = getApps().length ? getApps()[0] : initializeApp({ credential });
-    db = getFirestore(app, databaseId);
+    effectiveProjectId = resolveProjectId();
+    effectiveDatabaseId = process.env.FIRESTORE_DATABASE_ID || DEFAULT_DATABASE_ID;
+    const app = getApps().length
+      ? getApps()[0]
+      : initializeApp(effectiveProjectId ? { credential, projectId: effectiveProjectId } : { credential });
+    db = getFirestore(app, effectiveDatabaseId);
     db.settings({ ignoreUndefinedProperties: true });
+    if (!initLogged) {
+      initLogged = true;
+      console.log(`[FirestoreAdmin] Init ok: project=${effectiveProjectId || 'unknown'} database=${effectiveDatabaseId}`);
+      if (effectiveProjectId && effectiveProjectId !== EXPECTED_PROJECT_ID) {
+        console.warn(
+          `[FirestoreAdmin] Project mismatch: service-account project="${effectiveProjectId}" but expected="${EXPECTED_PROJECT_ID}". ` +
+            `listOrders will return 5 NOT_FOUND until FIREBASE_SERVICE_ACCOUNT_JSON is replaced.`
+        );
+      }
+      if (effectiveDatabaseId === '(default)') {
+        console.warn(
+          `[FirestoreAdmin] FIRESTORE_DATABASE_ID=(default) but Theoria orders live in named DB "${DEFAULT_DATABASE_ID}". ` +
+            `Unset FIRESTORE_DATABASE_ID or set it to the named DB id unless you migrated to (default).`
+        );
+      }
+    }
     return db;
   } catch (err) {
-    console.warn('[FirestoreAdmin] Init failed:', (err as Error)?.message || err);
+    console.warn('[FirestoreAdmin] Init failed:', formatFirestoreError(err));
+    return null;
+  }
+}
+
+/** Lazily open the `(default)` database as a read fallback when the named DB 404s. */
+function getFallbackDb(): Firestore | null {
+  const primary = getAdminDb();
+  if (!primary) return null;
+  if (effectiveDatabaseId === '(default)') return null;
+  if (fallbackDb) return fallbackDb;
+  if (fallbackAttempted) return null;
+  fallbackAttempted = true;
+  try {
+    const app = getApps()[0];
+    if (!app) return null;
+    fallbackDb = getFirestore(app, '(default)');
+    fallbackDb.settings({ ignoreUndefinedProperties: true });
+    console.warn('[FirestoreAdmin] Fallback DB opened: database=(default) (used only after primary NOT_FOUND).');
+    return fallbackDb;
+  } catch (err) {
+    console.warn('[FirestoreAdmin] Fallback DB init failed:', formatFirestoreError(err));
     return null;
   }
 }
 
 export function isAdminDbConfigured(): boolean {
   return getAdminDb() !== null;
+}
+
+/** Non-secret diagnostics safe to return to authed admin callers. */
+export function getFirestoreDiagnostics(): Record<string, unknown> {
+  getAdminDb();
+  return {
+    configured: db !== null,
+    projectId: effectiveProjectId || null,
+    projectExpected: EXPECTED_PROJECT_ID,
+    projectMatch: effectiveProjectId ? effectiveProjectId === EXPECTED_PROJECT_ID : null,
+    databaseId: effectiveDatabaseId || null,
+    databaseExpected: DEFAULT_DATABASE_ID,
+    lastErrorOp,
+    lastErrorCode,
+    lastErrorMessage,
+  };
 }
 
 /** Find one order by orderCode (or document id fallback). */
@@ -79,7 +202,22 @@ export async function adminGetOrderByCode(orderCode: string): Promise<any | null
     const byId = await adb.collection('orders').doc(orderCode).get();
     if (byId.exists) return { ...byId.data(), id: byId.id };
   } catch (err) {
-    console.warn('[FirestoreAdmin] getOrder failed:', (err as Error)?.message || err);
+    recordError('getOrder', err);
+    if (isNotFoundError(err)) {
+      const fb = getFallbackDb();
+      if (fb) {
+        try {
+          const byCode = await fb.collection('orders').where('orderCode', '==', orderCode).limit(1).get();
+          if (!byCode.empty) {
+            const doc = byCode.docs[0];
+            console.warn('[FirestoreAdmin] getOrder recovered via (default) fallback DB.');
+            return { ...doc.data(), id: doc.id };
+          }
+        } catch (fbErr) {
+          recordError('getOrder(fallback)', fbErr);
+        }
+      }
+    }
   }
   return null;
 }
@@ -94,7 +232,7 @@ export async function adminSetFbSent(orderCode: string): Promise<boolean> {
     await target.set({ fb_sent: 1, fb_sent_at: Date.now() }, { merge: true });
     return true;
   } catch (err) {
-    console.warn('[FirestoreAdmin] setFbSent failed:', (err as Error)?.message || err);
+    recordError('setFbSent', err);
     return false;
   }
 }
@@ -107,7 +245,7 @@ export async function adminPatchOrder(docId: string, patch: Record<string, unkno
     await adb.collection('orders').doc(docId).set(patch, { merge: true });
     return true;
   } catch (err) {
-    console.warn('[FirestoreAdmin] patchOrder failed:', (err as Error)?.message || err);
+    recordError('patchOrder', err);
     return false;
   }
 }
@@ -122,7 +260,7 @@ export async function adminDeleteOrder(key: string): Promise<boolean> {
     await adb.collection('orders').doc(docId).delete();
     return true;
   } catch (err) {
-    console.warn('[FirestoreAdmin] deleteOrder failed:', (err as Error)?.message || err);
+    recordError('deleteOrder', err);
     return false;
   }
 }
@@ -136,7 +274,8 @@ export async function adminCreateOrder(order: Record<string, unknown>): Promise<
     await adb.collection('orders').doc(String(docId)).set(order, { merge: true });
     return true;
   } catch (err) {
-    console.warn('[FirestoreAdmin] createOrder failed:', (err as Error)?.message || err);
+    // No fallback write: falling back to (default) would split the dataset.
+    recordError('createOrder', err);
     return false;
   }
 }
@@ -149,7 +288,19 @@ export async function adminListOrders(limit = 250): Promise<any[]> {
     const snap = await adb.collection('orders').orderBy('createdAt', 'desc').limit(limit).get();
     return snap.docs.map((d) => ({ ...d.data(), id: d.id }));
   } catch (err) {
-    console.warn('[FirestoreAdmin] listOrders failed:', (err as Error)?.message || err);
+    recordError('listOrders', err);
+    if (isNotFoundError(err)) {
+      const fb = getFallbackDb();
+      if (fb) {
+        try {
+          const snap = await fb.collection('orders').orderBy('createdAt', 'desc').limit(limit).get();
+          console.warn('[FirestoreAdmin] listOrders recovered via (default) fallback DB.');
+          return snap.docs.map((d) => ({ ...d.data(), id: d.id }));
+        } catch (fbErr) {
+          recordError('listOrders(fallback)', fbErr);
+        }
+      }
+    }
     return [];
   }
 }
@@ -162,18 +313,33 @@ export async function adminListOrdersByPhone(phone: string, limit = 20): Promise
   const variants = Array.from(
     new Set([String(phone).trim(), digits, digits.startsWith('0') ? `213${digits.substring(1)}` : digits])
   ).filter(Boolean);
-  try {
+  const queryDb = async (target: Firestore): Promise<any[]> => {
     const seen = new Map<string, any>();
     for (const v of variants.slice(0, 3)) {
-      const snap = await adb.collection('orders').where('phone', '==', v).limit(limit).get();
+      const snap = await target.collection('orders').where('phone', '==', v).limit(limit).get();
       snap.docs.forEach((d) => {
         if (!seen.has(d.id)) seen.set(d.id, { ...d.data(), id: d.id });
       });
       if (seen.size >= limit) break;
     }
     return Array.from(seen.values()).slice(0, limit);
+  };
+  try {
+    return await queryDb(adb);
   } catch (err) {
-    console.warn('[FirestoreAdmin] listOrdersByPhone failed:', (err as Error)?.message || err);
+    recordError('listOrdersByPhone', err);
+    if (isNotFoundError(err)) {
+      const fb = getFallbackDb();
+      if (fb) {
+        try {
+          const rows = await queryDb(fb);
+          console.warn('[FirestoreAdmin] listOrdersByPhone recovered via (default) fallback DB.');
+          return rows;
+        } catch (fbErr) {
+          recordError('listOrdersByPhone(fallback)', fbErr);
+        }
+      }
+    }
     return [];
   }
 }
@@ -191,9 +357,15 @@ export async function adminListOrdersSince(since = 0, limit = 100): Promise<any[
     const snap = await q.limit(limit).get();
     return snap.docs.map((d) => ({ ...d.data(), id: d.id }));
   } catch (err) {
+    if (isNotFoundError(err)) {
+      // Missing DB — delegate to adminListOrders which already tries the fallback.
+      recordError('listOrdersSince', err);
+      const all = await adminListOrders(limit);
+      return since > 0 ? all.filter((o) => Number(o?.createdAt || 0) > since) : all;
+    }
     // Composite where+orderBy may need an index on older DBs — fall back to
     // full list + in-memory filter so incremental polling never breaks.
-    console.warn('[FirestoreAdmin] listOrdersSince fallback to listOrders:', (err as Error)?.message || err);
+    recordError('listOrdersSince fallback to listOrders', err);
     const all = await adminListOrders(limit);
     return since > 0 ? all.filter((o) => Number(o?.createdAt || 0) > since) : all;
   }

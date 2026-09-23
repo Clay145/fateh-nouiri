@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { applyCors } from './_cors.js';
 import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
-import { adminCreateOrder, adminDeleteOrder, adminGetOrderByCode, adminListOrders, adminListOrdersByPhone, adminListOrdersSince, adminPatchOrder, isAdminDbConfigured } from './_firestoreAdmin.js';
+import { adminCreateOrder, adminDeleteOrder, adminGetOrderByCode, adminListOrders, adminListOrdersByPhone, adminListOrdersSince, adminPatchOrder, getFirestoreDiagnostics, isAdminDbConfigured } from './_firestoreAdmin.js';
 
 interface VercelRequest {
   method?: string;
@@ -214,6 +214,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       orders: result,
       source: dbOrders.length ? 'memory+firestore' : memoryOrders.length ? 'memory' : 'empty',
       firestoreConfigured: isAdminDbConfigured(),
+      firestore: getFirestoreDiagnostics(),
       serverTime: Date.now(),
       since,
     });
