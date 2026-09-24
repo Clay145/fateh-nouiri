@@ -22,8 +22,6 @@ declare global {
   var __THEORIA_CAPI_DISPATCHED__: Set<string> | undefined;
 }
 
-const META_PIXEL_ID = '28477410788542282';
-
 function hashSha256(val: string): string {
   return crypto.createHash('sha256').update(val.trim().toLowerCase()).digest('hex');
 }

@@ -9,8 +9,41 @@
  * helpers make that failure loud and actionable instead of a raw body dump.
  */
 
-export function getMetaAccessToken(): string {
-  return process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
+import { getMetaAccessToken } from './_metaConfig.js';
+export { getMetaAccessToken };
+
+export type MetaErrorDisposition = 'ok' | 'definitive' | 'retryable';
+
+/**
+ * Classify a Meta Graph response so every CAPI caller shares one
+ * retry policy:
+ * - ok: HTTP 2xx with events_received (or fbtrace_id without error).
+ * - definitive: 100/33 (no pixel grant), 190 (dead token), any other
+ *   4xx — retrying with the same payload can never succeed. Caller must
+ *   claim SENT/deduped and stop.
+ * - retryable: 429 / 5xx / network / timeout — caller must release its
+ *   in-flight guard so the next beacon retries with the SAME event_id
+ *   (Meta dedupes by event_id, so a retry can never double-count).
+ */
+export function classifyMetaError(httpStatus: number, metaData: any): MetaErrorDisposition {
+  const err = metaData?.error;
+  if (httpStatus >= 200 && httpStatus < 300 && !err) return 'ok';
+  if (err && (isInvalidTokenResponse(metaData) || isPixelAccessDeniedResponse(metaData))) {
+    return 'definitive';
+  }
+  if (httpStatus >= 400 && httpStatus < 500) return 'definitive';
+  return 'retryable';
+}
+
+/**
+ * Report a failed Meta body with the actionable throttled loggers and
+ * return its disposition. Callers branch on the return value instead of
+ * re-implementing status-code checks inline.
+ */
+export function handleMetaErrorBody(metaData: any, context: string, pixelId: string, httpStatus: number): MetaErrorDisposition {
+  reportMetaTokenIfInvalid(metaData, context);
+  reportMetaPixelAccessIfDenied(metaData, context, pixelId);
+  return classifyMetaError(httpStatus, metaData);
 }
 
 /** True when a Meta Graph error body reports an invalid/dead access token. */
@@ -21,13 +54,17 @@ export function isInvalidTokenResponse(metaData: any): boolean {
 
 /**
  * True when Meta reports the target object (pixel/dataset) as inaccessible:
- * GraphMethodException 100/33 — exists but the token has no grant on it.
- * Typical right after minting a fresh System User token before assigning
- * the pixel asset to that user.
+ * GraphMethodException 100/33 on POST /{pixel}/events, or OAuthException
+ * 100 "(#100) Missing Permission" on GET /{pixel} — both mean the token is
+ * alive but has no grant on that dataset. Typical right after minting a
+ * fresh System User token before assigning the pixel asset to that user.
  */
 export function isPixelAccessDeniedResponse(metaData: any): boolean {
   const err = metaData?.error || metaData;
-  return Number(err?.code) === 100 && Number((err as any)?.error_subcode) === 33;
+  if (Number(err?.code) !== 100) return false;
+  if (Number((err as any)?.error_subcode) === 33) return true;
+  const msg = String((err as any)?.message || '').toLowerCase();
+  return msg.includes('missing permission') || msg.includes('does not exist');
 }
 
 declare global {

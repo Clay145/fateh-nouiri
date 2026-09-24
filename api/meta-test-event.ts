@@ -17,8 +17,8 @@ interface VercelResponse {
 
 import { applyCors } from './_cors.js';
 import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
-
-const META_PIXEL_ID = '28477410788542282';
+import { getMetaAccessToken, getMetaCurrency, getMetaPixelId } from './_metaConfig.js';
+import { handleMetaErrorBody } from './_metaToken.js';
 
 function hashSha256(val: string): string {
   return crypto.createHash('sha256').update(val.trim().toLowerCase()).digest('hex');
@@ -116,7 +116,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Reporting currency defaults to USD: fbevents.js rejects DZD
   // ("Parameter 'currency' is invalid"), so the test CAPI leg and the
   // browser command below must agree on USD. Order model stays DZD.
-  const testMetaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+  const testMetaCurrency = getMetaCurrency();
   const testEffectiveCurrency = testMetaCurrency === 'DZD' ? 'DZD' : testMetaCurrency === 'EUR' ? 'EUR' : 'USD';
   const testEffectiveValue = testEffectiveCurrency === 'USD'
     ? Number((mockOrder.totalPrice / 135).toFixed(2))
@@ -126,7 +126,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Env-only auth: no hardcoded fallback. Without a token the endpoint
   // returns a simulated payload so connectivity can be tested safely.
-  const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
+  const accessToken = getMetaAccessToken();
+  const effectivePixelId = getMetaPixelId();
   let metaResult: any = accessToken
     ? { status: 'pending', message: 'Dispatching Meta test event' }
     : { status: 'simulated_local', message: 'No CAPI token configured (META_CONVERSIONS_API_ACCESS_TOKEN). Returning simulated payload only.' };
@@ -179,13 +180,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         capiPayload.test_event_code = String(effectiveTestCode).trim();
       }
 
-      const metaRes = await fetch(`https://graph.facebook.com/v20.0/${META_PIXEL_ID}/events?access_token=${accessToken}`, {
+      const metaRes = await fetch(`https://graph.facebook.com/v20.0/${effectivePixelId}/events?access_token=${accessToken}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(capiPayload),
       });
 
       metaResult = await metaRes.json();
+      if (!metaRes.ok) {
+        handleMetaErrorBody(metaResult, `TestEvent ${testEventId}`, effectivePixelId, metaRes.status);
+      }
     } catch (err: any) {
       metaResult = { error: err?.message || 'Failed to dispatch Meta CAPI' };
     }

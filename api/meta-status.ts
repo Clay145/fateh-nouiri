@@ -22,7 +22,7 @@ declare global {
   var __THEORIA_ORDERS__: any[] | undefined;
 }
 
-const META_PIXEL_ID = '28477410788542282';
+import { getMetaPixelId } from './_metaConfig.js';
 const PURGED_TEST_PIXEL_IDS = ['1699977874052309', '1400263654406240', '1961559868019808'];
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -38,11 +38,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Live token + pixel-grant check (cached 60s, never throws): surfaces a
   // dead/invalidated CAPI token or a missing pixel grant in the dashboard
   // instead of hiding it behind hasAccessToken.
-  const tokenHealth = await getMetaTokenHealth(META_PIXEL_ID);
+  const effectivePixelId = getMetaPixelId();
+  const tokenHealth = await getMetaTokenHealth(effectivePixelId);
 
   return res.status(200).json({
     success: true,
-    pixelId: META_PIXEL_ID,
+    pixelId: effectivePixelId,
     pixelName: 'pixel theoria',
     purgedPixels: PURGED_TEST_PIXEL_IDS,
     hasAccessToken: Boolean(process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN),

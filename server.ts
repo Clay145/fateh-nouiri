@@ -13,7 +13,8 @@ import {
   verifyAdminPassword,
   verifyAdminToken,
 } from './api/_adminAuth';
-import { reportMetaTokenIfInvalid, reportMetaPixelAccessIfDenied } from './api/_metaToken';
+import { getMetaAccessToken, getMetaCurrency, getMetaPixelId, META_PIXEL_ID_FALLBACK } from './api/_metaConfig';
+import { handleMetaErrorBody } from './api/_metaToken';
 
 interface OrderItem {
   id: string;
@@ -41,8 +42,9 @@ interface OrderItem {
   capiStatus?: 'sent' | 'deduplicated' | 'skipped' | 'test_mode' | 'capi_purchase_disabled';
 }
 
-// Meta Conversions API & Pixel Configuration
-export const META_PIXEL_ID = process.env.META_PIXEL_ID || '28477410788542282';
+// Meta Conversions API & Pixel Configuration (single source of truth lives
+// in api/_metaConfig.ts — this export is kept for existing importers).
+export const META_PIXEL_ID = META_PIXEL_ID_FALLBACK;
 export const PURGED_TEST_PIXEL_IDS = ['2995569250646819', '892942970517633'];
 
 // Server-side Deduplication Cache: Order Codes that have already fired a Purchase CAPI event
@@ -239,7 +241,7 @@ async function processMetaCapiStandardEvent(params: {
 
   // Reporting currency defaults to USD: fbevents.js rejects DZD
   // ("Parameter 'currency' is invalid"), so browser + CAPI must agree on USD.
-  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+  const metaCurrency = getMetaCurrency();
   const rawValue = Number(params.value) || 9500;
   const value = metaCurrency === 'DZD'
     ? rawValue
@@ -283,9 +285,13 @@ async function processMetaCapiStandardEvent(params: {
   };
   if (params.testEventCode) payload.test_event_code = params.testEventCode;
 
-  const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
-  const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
+  const effectivePixelId = getMetaPixelId();
+  const accessToken = getMetaAccessToken();
   if (!accessToken) {
+    // Fail fast without claiming the dedup key: a missing token is a deploy
+    // misconfiguration, not a definitive Meta rejection — the next beacon
+    // must retry with the same event_id once the env var is set.
+    processedCapiStandardEventIds.delete(params.eventId);
     console.warn(`[Meta CAPI] Missing access token; skipped ${params.eventName} event_id=${params.eventId}. Set META_CONVERSIONS_API_ACCESS_TOKEN.`);
     return;
   }
@@ -304,13 +310,20 @@ async function processMetaCapiStandardEvent(params: {
       console.log(`[Meta CAPI] ${params.eventName} event_id=${params.eventId} test_event_code=${params.testEventCode || 'none'} status=${response.status}`, JSON.stringify(result));
       if (!response.ok) {
         console.error('[Meta CAPI] FB Error Body:', result);
-        reportMetaTokenIfInvalid(result, `${params.eventName} ${params.eventId}`);
-        reportMetaPixelAccessIfDenied(result, `${params.eventName} ${params.eventId}`, effectivePixelId);
+        const disposition = handleMetaErrorBody(result, `${params.eventName} ${params.eventId}`, effectivePixelId, response.status);
+        if (disposition === 'retryable') {
+          // 429/5xx: release the key so the next beacon retries with the
+          // SAME event_id (Meta dedupes, so no double-count). Definitive
+          // 4xx (incl. 100/33, 190) stays claimed — retrying can't help.
+          processedCapiStandardEventIds.delete(params.eventId);
+        }
       }
     } finally {
       clearTimeout(stdTimeout);
     }
   } catch (error: any) {
+    // Network/abort: release so the next beacon retries with same event_id.
+    processedCapiStandardEventIds.delete(params.eventId);
     console.error(`[Meta CAPI] ${params.eventName} request failed:`, error?.message || error);
   }
 }
@@ -385,7 +398,7 @@ async function processMetaCapiPurchase(
 
   // Reporting currency defaults to USD: fbevents.js rejects DZD
   // ("Parameter 'currency' is invalid"), so browser + CAPI must agree on USD.
-  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+  const metaCurrency = getMetaCurrency();
   const effectiveCurrency = metaCurrency === 'DZD' ? 'DZD' : (metaCurrency === 'EUR' ? 'EUR' : 'USD');
   const rawPrice = Number(order.totalPrice) || 9500;
   const effectiveValue = effectiveCurrency === 'USD'
@@ -485,10 +498,10 @@ async function processMetaCapiPurchase(
     payload.test_event_code = trimmedTestCode;
   }
 
-  const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
+  const effectivePixelId = getMetaPixelId();
   const matchScore = calculateMatchScore(userData);
   // Env-only auth: never fall back to a hardcoded secret.
-  const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
+  const accessToken = getMetaAccessToken();
 
   let finalStatus: CapiEventRecord['status'] = 'logged_test_mode';
   let responseText = 'Simulated payload prepared with Event Match Quality ' + matchScore + '/10';
@@ -519,8 +532,7 @@ async function processMetaCapiPurchase(
       } else {
         responseText = `Meta Graph API Notice: ${JSON.stringify(resJson)}`;
         console.error(`[Meta CAPI Error] Meta API Error for order ${orderCode}:`, JSON.stringify(resJson?.error || resJson));
-        reportMetaTokenIfInvalid(resJson, `Purchase ${orderCode}`);
-        reportMetaPixelAccessIfDenied(resJson, `Purchase ${orderCode}`, effectivePixelId);
+        handleMetaErrorBody(resJson, `Purchase ${orderCode}`, effectivePixelId, response.status);
       }
     } catch (err: any) {
       console.error('[Meta CAPI Request Failed]', err?.message || err);
@@ -1044,7 +1056,7 @@ async function startServer() {
       redirect_url,
       metaDeduplication: {
         eventId: fb_event_id,
-        pixelId: META_PIXEL_ID,
+        pixelId: getMetaPixelId(),
         capiStatus: newOrder.capiStatus,
         testEventCode: testEventCode ? String(testEventCode).trim() : null,
         currency: 'DZD',
@@ -1142,7 +1154,7 @@ async function startServer() {
   app.get('/api/meta/status', checkAdminAuth, (req: Request, res: Response) => {
     res.json({
       success: true,
-      pixelId: META_PIXEL_ID,
+      pixelId: getMetaPixelId(),
       pixelName: 'pixel theoria',
       purgedPixels: PURGED_TEST_PIXEL_IDS,
       hasAccessToken: Boolean(process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN),

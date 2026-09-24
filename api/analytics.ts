@@ -4,7 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import { applyCors } from './_cors.js';
 import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
-import { reportMetaTokenIfInvalid, reportMetaPixelAccessIfDenied } from './_metaToken.js';
+import { getMetaAccessToken, getMetaCurrency, getMetaPixelId, isMetaPixelFallback } from './_metaConfig.js';
+import { handleMetaErrorBody } from './_metaToken.js';
 
 interface VercelRequest {
   method?: string;
@@ -270,13 +271,15 @@ async function sendCapiStandardEvent(params: {
     if (first) global.__THEORIA_CAPI_SENT__.delete(first);
   }
 
-  const accessToken =
-    process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
+  const accessToken = getMetaAccessToken();
   if (!accessToken) {
     console.warn(`[Meta CAPI] No token configured, skipping ${params.eventName} event_id=${params.eventId} test_event_code=${params.testEventCode || 'none'}. Set META_CONVERSIONS_API_ACCESS_TOKEN in Vercel env.`);
     return;
   }
-  const pixelId = process.env.META_PIXEL_ID || '28477410788542282';
+  const pixelId = getMetaPixelId();
+  if (isMetaPixelFallback()) {
+    console.warn(`[Meta CAPI] META_PIXEL_ID env missing, using fallback ${pixelId} for ${params.eventName} ${params.eventId}. Set META_PIXEL_ID in Vercel env to silence this.`);
+  }
 
   const userData: Record<string, unknown> = { country: [capiHash('dz')] };
   // Identity enrichment: only hashed values leave this function. Missing
@@ -298,7 +301,7 @@ async function sendCapiStandardEvent(params: {
 
   // Reporting currency defaults to USD: fbevents.js rejects DZD
   // ("Parameter 'currency' is invalid"), so browser + CAPI must agree on USD.
-  const metaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+  const metaCurrency = getMetaCurrency();
   const rawValue = Number(params.value) || 9500;
   const value =
     metaCurrency === 'DZD' ? rawValue : Number((rawValue / (metaCurrency === 'EUR' ? 145 : 135)).toFixed(2));
@@ -368,17 +371,13 @@ async function sendCapiStandardEvent(params: {
     console.log(`[Meta CAPI] ${params.eventName} ${params.eventId} -> ${res.status}`, JSON.stringify(data));
     if (!res.ok) {
       console.error('[Meta CAPI] FB Error Body:', data);
-      // Dead token (190) is claimed, not retried — regenerating the token is
-      // the only fix; the throttled actionable log fires inside.
-      reportMetaTokenIfInvalid(data, `${params.eventName} ${params.eventId}`);
-      reportMetaPixelAccessIfDenied(data, `${params.eventName} ${params.eventId}`, pixelId);
-      if (res.status >= 400 && res.status < 500) {
-        // Definitive Meta rejection — retrying won't help. Claim the key.
+      // Shared disposition: 100/33 + 190 + other 4xx are definitive
+      // (claim SENT, never retry); 429/5xx release for next-beacon retry
+      // with the same event_id. Actionable throttled log fires inside.
+      const disposition = handleMetaErrorBody(data, `${params.eventName} ${params.eventId}`, pixelId, res.status);
+      if (disposition === 'definitive') {
         global.__THEORIA_CAPI_SENT__?.add(key);
-        releaseInflight();
-        return;
       }
-      // 5xx/429: fall through to release for retry on the next beacon.
       releaseInflight();
       return;
     }

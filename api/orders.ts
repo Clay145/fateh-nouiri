@@ -2,7 +2,8 @@ import crypto from 'crypto';
 import { applyCors } from './_cors.js';
 import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
 import { adminCreateOrder, adminDeleteOrder, adminGetOrderByCode, adminGetOrderByCodeStrict, adminListOrders, adminListOrdersByPhone, adminListOrdersSince, adminPatchOrder, getFirestoreDiagnostics, isAdminDbConfigured } from './_firestoreAdmin.js';
-import { reportMetaTokenIfInvalid, reportMetaPixelAccessIfDenied } from './_metaToken.js';
+import { getMetaAccessToken, getMetaCurrency, getMetaPixelId } from './_metaConfig.js';
+import { handleMetaErrorBody } from './_metaToken.js';
 
 interface VercelRequest {
   method?: string;
@@ -34,7 +35,7 @@ if (!global.__THEORIA_CAPI_DISPATCHED__) {
   global.__THEORIA_CAPI_DISPATCHED__ = new Set<string>();
 }
 
-const META_PIXEL_ID = '28477410788542282';
+
 
 function hashSha256(val: string): string {
   return crypto.createHash('sha256').update(val.trim().toLowerCase()).digest('hex');
@@ -379,10 +380,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // customer checkout hostage. Failure here never fails the order.
     // Reporting currency defaults to USD (fbevents.js rejects DZD); computed
     // once here so the response metaDeduplication block below can reference it.
-    const orderMetaCurrency = (process.env.META_CURRENCY || process.env.VITE_META_CURRENCY || 'USD').toUpperCase();
+    const orderMetaCurrency = getMetaCurrency();
     const orderEffectiveCurrency = orderMetaCurrency === 'DZD' ? 'DZD' : orderMetaCurrency === 'EUR' ? 'EUR' : 'USD';
-    const effectivePixelId = process.env.META_PIXEL_ID || META_PIXEL_ID;
-    const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN || '';
+    const effectivePixelId = getMetaPixelId();
+    const accessToken = getMetaAccessToken();
 
     if (capiDuplicate) {
       // Already dispatched: order is persisted, nothing to send.
@@ -517,10 +518,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             newOrder.capiStatus = 'sent';
           } else {
             console.error(`[Meta CAPI Error] Meta Graph API returned error:`, JSON.stringify(metaData?.error || metaData));
-            // Dead token (190): order stays durable, only CAPI is blind until
-            // the token is regenerated — actionable log fires inside (throttled).
-            reportMetaTokenIfInvalid(metaData, `Purchase ${orderCode}`);
-            reportMetaPixelAccessIfDenied(metaData, `Purchase ${orderCode}`, effectivePixelId);
+            // Shared disposition: 100/33 (no pixel grant) + 190 (dead token)
+            // + other 4xx are definitive — order stays durable, only CAPI is
+            // blind until the grant/token is fixed. Actionable log fires
+            // inside (throttled). 429/5xx are transient; the next order
+            // attempt reuses a fresh event_id path via dedup guards.
+            handleMetaErrorBody(metaData, `Purchase ${orderCode}`, effectivePixelId, metaRes.status);
           }
         } finally {
           clearTimeout(capiTimeout);
@@ -555,7 +558,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       redirect_url,
       metaDeduplication: {
         eventId,
-        pixelId: META_PIXEL_ID,
+        pixelId: effectivePixelId,
         currency: orderEffectiveCurrency,
         testEventCode: testEventCode ? String(testEventCode).trim() : null,
         capiStatus: newOrder.capiStatus,
