@@ -624,21 +624,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    if (fieldName) {
-      session.lastActiveField = fieldName;
+    if (typeof fieldName === 'string' && fieldName in stats.fieldDropOffs) {
+      const fieldKey = fieldName as keyof typeof stats.fieldDropOffs;
+      session.lastActiveField = fieldKey;
       // Best-effort first-touch guard (warm instances): count each field once
       // per session. Client gates repeats; this is the backstop for old clients.
       if (!global.__THEORIA_FIELD_TOUCHES__) global.__THEORIA_FIELD_TOUCHES__ = new Set<string>();
-      const seenKey = `${sessionId}|${fieldName}`;
+      const seenKey = `${sessionId}|${fieldKey}`;
       if (!global.__THEORIA_FIELD_TOUCHES__.has(seenKey)) {
         global.__THEORIA_FIELD_TOUCHES__.add(seenKey);
         if (global.__THEORIA_FIELD_TOUCHES__.size > 5000) {
           const first = global.__THEORIA_FIELD_TOUCHES__.values().next().value;
           if (first) global.__THEORIA_FIELD_TOUCHES__.delete(first);
         }
-        if (stats.fieldDropOffs[fieldName] !== undefined) {
-          stats.fieldDropOffs[fieldName] = (stats.fieldDropOffs[fieldName] || 0) + 1;
-        }
+        stats.fieldDropOffs[fieldKey] = (stats.fieldDropOffs[fieldKey] || 0) + 1;
       }
     }
 
