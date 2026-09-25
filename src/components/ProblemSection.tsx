@@ -22,7 +22,10 @@ export const ProblemSection: React.FC = () => {
             alt="مقارنة حقيقية: إجهاد العمل والشاشات والصداع مع المسكنات مقابل الراحة التامة والاسترخاء مع قناع Theoria"
             className="w-full h-64 sm:h-80 lg:h-full object-cover"
             src={ASSETS.comparison}
+            width={512}
+            height={286}
             loading="lazy"
+            decoding="async"
           />
           <div className="absolute top-3 right-3 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-md text-[11px] font-bold text-[#ff6b6b] flex items-center gap-1 border border-[#ff6b6b]/30">
             <span className="material-symbols-outlined text-sm">close</span>

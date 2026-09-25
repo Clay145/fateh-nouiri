@@ -1,9 +1,9 @@
 @import "tailwindcss";
 
 @theme {
-  --font-headline: "Cairo", "Inter", sans-serif;
-  --font-body: "Cairo", "Inter", sans-serif;
-  --font-display: "Cairo", "Inter", sans-serif;
+  --font-headline: "Cairo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: "Cairo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Cairo", system-ui, -apple-system, "Segoe UI", sans-serif;
 
   --color-primary: #7dd3fc;
   --color-primary-fixed: #c8eaff;
@@ -49,7 +49,7 @@
 
   html {
     scroll-behavior: smooth;
-    font-family: 'Cairo', 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: 'Cairo', system-ui, -apple-system, 'Segoe UI', sans-serif;
     overflow-x: hidden;
     max-width: 100vw;
     width: 100%;

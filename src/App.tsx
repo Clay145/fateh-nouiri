@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { TopBanner } from './components/TopBanner';
 import { Navbar } from './components/Navbar';
 import { HeroSection } from './components/HeroSection';
@@ -8,15 +8,30 @@ import { FaqSection } from './components/FaqSection';
 import { OrderSection } from './components/OrderSection';
 import { Footer } from './components/Footer';
 import { FloatingMobileBar } from './components/FloatingMobileBar';
-import { SoundPlayerBar } from './components/SoundPlayerBar';
-import { OrderSuccessModal } from './components/OrderSuccessModal';
-import { OrdersHistoryModal } from './components/OrdersHistoryModal';
-import { AdminDashboard } from './components/AdminDashboard';
-import { AdminAuthGate } from './components/AdminAuthGate';
 import { PlacedOrder } from './types';
 import { verifyAdminSession, removeAdminToken } from './services/orderService';
 import { trackPageViewVisitor, trackContentEngagement } from './services/analyticsService';
-import { ThankYouPage } from './components/ThankYouPage';
+
+// Below-fold / route-gated code — split into separate chunks so the initial
+// storefront bundle stays lean. Firebase rides along lazily via orderService.
+const SoundPlayerBar = lazy(() =>
+  import('./components/SoundPlayerBar').then((m) => ({ default: m.SoundPlayerBar }))
+);
+const OrderSuccessModal = lazy(() =>
+  import('./components/OrderSuccessModal').then((m) => ({ default: m.OrderSuccessModal }))
+);
+const OrdersHistoryModal = lazy(() =>
+  import('./components/OrdersHistoryModal').then((m) => ({ default: m.OrdersHistoryModal }))
+);
+const AdminDashboard = lazy(() =>
+  import('./components/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
+);
+const AdminAuthGate = lazy(() =>
+  import('./components/AdminAuthGate').then((m) => ({ default: m.AdminAuthGate }))
+);
+const ThankYouPage = lazy(() =>
+  import('./components/ThankYouPage').then((m) => ({ default: m.ThankYouPage }))
+);
 
 export default function App() {
   const isInitialThankYou = typeof window !== 'undefined' && (
@@ -132,24 +147,32 @@ export default function App() {
 
   // When user visits Thank You page
   if (viewMode === 'thank-you') {
-    return <ThankYouPage />;
+    return (
+      <Suspense fallback={null}>
+        <ThankYouPage />
+      </Suspense>
+    );
   }
 
   // When user enters admin route
   if (viewMode === 'admin') {
     if (!isAdminAuthenticated) {
       return (
-        <AdminAuthGate
-          onAuthenticated={() => setIsAdminAuthenticated(true)}
-          onExit={handleExitAdmin}
-        />
+        <Suspense fallback={null}>
+          <AdminAuthGate
+            onAuthenticated={() => setIsAdminAuthenticated(true)}
+            onExit={handleExitAdmin}
+          />
+        </Suspense>
       );
     }
     return (
-      <AdminDashboard
-        onExitDashboard={handleExitAdmin}
-        onLogout={handleAdminLogout}
-      />
+      <Suspense fallback={null}>
+        <AdminDashboard
+          onExitDashboard={handleExitAdmin}
+          onLogout={handleAdminLogout}
+        />
+      </Suspense>
     );
   }
 
@@ -195,24 +218,36 @@ export default function App() {
       {/* Smart Sticky Checkout Dock */}
       <FloatingMobileBar />
 
-      {/* Ambient Relaxation Sound Player Modal */}
-      <SoundPlayerBar
-        isOpen={soundModalOpen}
-        onClose={() => setSoundModalOpen(false)}
-        onStateChange={(playing) => setSoundPlaying(playing)}
-      />
+      {/* Ambient Relaxation Sound Player Modal (chunk loads only when opened) */}
+      {soundModalOpen && (
+        <Suspense fallback={null}>
+          <SoundPlayerBar
+            isOpen={soundModalOpen}
+            onClose={() => setSoundModalOpen(false)}
+            onStateChange={(playing) => setSoundPlaying(playing)}
+          />
+        </Suspense>
+      )}
 
-      {/* Order Confirmation Receipt Modal */}
-      <OrderSuccessModal
-        order={successfulOrder}
-        onClose={() => setSuccessfulOrder(null)}
-      />
+      {/* Order Confirmation Receipt Modal (chunk loads only after an order) */}
+      {successfulOrder && (
+        <Suspense fallback={null}>
+          <OrderSuccessModal
+            order={successfulOrder}
+            onClose={() => setSuccessfulOrder(null)}
+          />
+        </Suspense>
+      )}
 
-      {/* Orders History & Tracking Modal */}
-      <OrdersHistoryModal
-        isOpen={historyModalOpen}
-        onClose={() => setHistoryModalOpen(false)}
-      />
+      {/* Orders History & Tracking Modal (chunk loads only when opened) */}
+      {historyModalOpen && (
+        <Suspense fallback={null}>
+          <OrdersHistoryModal
+            isOpen={historyModalOpen}
+            onClose={() => setHistoryModalOpen(false)}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

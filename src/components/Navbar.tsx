@@ -47,6 +47,9 @@ export const Navbar: React.FC<NavbarProps> = ({
           <img
             src={ASSETS.logo}
             alt="Theoria Logo"
+            width={512}
+            height={279}
+            decoding="async"
             className="h-7 sm:h-8 w-auto object-contain rounded-md"
           />
           <span className="text-sm sm:text-lg font-headline font-extrabold tracking-tight text-[#e0e8f0]">Theoria</span>

@@ -1,10 +1,13 @@
+// Self-hosted WebP (public/img/*) — same-origin, immutable-cached, no
+// cross-origin DNS/TLS on the LCP path. Regenerate with PIL if source art
+// changes; keep width/height attrs on <img> tags in sync with these files.
 export const ASSETS = {
-  logo: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBMJj9_d5vdoMebPTFPZFgJNdrgQ-U8c0tDTrf1qy003nd83_O0pA1PHau90ZH2s_pMJVs_NhHbzocM_bnF_fCm6aDILr13udXiRpy_FdlMQskRDda1YbEOzBkCziT3eyPfpJg5szqldbk_7LlHrrlWPTkge_DqHab7wyHY-FemRZfpk_thChjBayYmfobaXk98ogSOZ4Qiktas2fDnV1Z4cPWN_n_4HMFHPKV--lD3cXcMNFHEzqGBvkNlWC-YiVAWLw',
-  lifestyle: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBFl4GjB9TAw1YhLEGd6tadC8sdVNervVvfyAfhgKPwXomeIACJYpLKjLW6GcgW46QQXZUNxeoMnEA8K8DRbep_BTlfGeOGMreYlHX1vRdEAMV6V5QOp1OIocKYgH82f9zMp4KauOYyZVyKDpCk4zvwTWSmnGFSbcghtIC9BrbIkikRcb4tv3OTI1lX9tUahNef0KQu7Bs2T8AjlcjKdvEQ85hCSD50veG-WO_csLu3b2k2lCzHlk15',
-  deviceFolded: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCumvdvoI-_xT9e8dW5QQ9RyR8LV12Eqi0kwyc3-PsGVC-FLH-r_ZGBFTWyuLJT5Q5cZmGo1enbotO2YferssHOqgN3yFdTR2CqnuaR5hKDgyGp8As7cl9wN1pxyieHog8__7aBlMDo16p6XDSxZdBETUDRL0yErLMA7WrNr4IZP3DKWRuT9gu3jA9B9BE4SewN11GE9XYkpFJHetcKxGSdztS5PYl-VBk-bDO_hdTL7pHWQfn5URQdZPWaIMZdG9O43g',
-  clinicalChart: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBIq5EiohMWu7ZcsPYX756R2BPo-nFZ0RFRkkcl65Wu3RoMhxGH4eP_Eol1nGoRKdFIVNdSDWZ4fdPoaSfvMzgM29NNoXp4pO0OZUnhno1o8wTOstdNvQz_P9yjjcaFDINGhcSyCqbXkf3nL6LuCqqOPft7aMypK8aIW6U6DjG1pVzPRT4odvg7-mtSfK49kikJRHAQJqtgsrrYl9r1D66JVX37XLO0CGxW2RhvbthIs_xoFDfmPgFNKsNZPwIr5M3Avg',
-  comparison: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCgt-cU0a6CKsgPEJvuqp9rgAiFaIkob2GIb_HlMy3o6-TSGyiY99gt1inAOMj4BUjLjJuiuP17DKQIXUnz35-lD9wP6REE5dKr5qbyGZlZNoKIjOmB520M6SoWpmz0xzY-ZKvRUT3sseR3GLxwFQ_JlFDSNdOCITQttzPI35i8_drry4J666NTBy1DW5a5PGf8GJANBFOx6SH1Y_LKu5Hx6nRLSsNyZ_exyZdtqS8B6vs9_ci0d5iY',
-  footerLogo: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCuE1HgYUppMOf4V7FdHnoAeFnNux-6fZDmfK3HlqWTJ_Br3XDaeuh4muEeeGleWLpsQqVfCz5vo3CeI1x2vN6xXPpllNP43wn5-_KbZ3KS3hXkl04OGwUT1ngfVns3k8PtRWanNprBBaw-c-NKgnJRnjc4zwiRTlfsEN8YhYUaqfYbunChf8i8YVvNMI8_VaPHp0JQNlnLCarrLxB5ejI_Ettr6VYFWE3I40qV7ijwFBspx-JOozt22x85afDEwirB_Q',
+  logo: '/img/logo.webp',
+  lifestyle: '/img/lifestyle.webp',
+  deviceFolded: '/img/device-folded.webp',
+  clinicalChart: '/img/clinical-chart.webp',
+  comparison: '/img/comparison.webp',
+  footerLogo: '/img/footer-logo.webp',
 };
 
 export const STORE_INFO = {

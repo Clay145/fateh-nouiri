@@ -1,16 +1,27 @@
 import { PlacedOrder, OrderStatus } from '../types';
-import { db } from '../lib/firebase';
-import {
-  collection,
-  doc,
-  setDoc,
-  getDocs,
-  updateDoc,
-  deleteDoc,
-  onSnapshot,
-  query,
-  orderBy,
-} from 'firebase/firestore';
+
+// Lazy Firestore access — keeps `firebase/*` out of the initial storefront
+// bundle. The SDK (+ connection warm-up) loads on first actual Firestore use
+// (checkout submit, admin views), never on landing paint. All Firestore paths
+// are best-effort mirrors; the server API is the source of truth.
+type FirestoreDb = import('firebase/firestore').Firestore;
+type FirestoreSdk = typeof import('firebase/firestore');
+let firestoreLazy: Promise<{ db: FirestoreDb; fs: FirestoreSdk }> | null = null;
+async function loadFirestoreLazy(): Promise<{ db: FirestoreDb; fs: FirestoreSdk }> {
+  const [fb, fs] = await Promise.all([import('../lib/firebase'), import('firebase/firestore')]);
+  // Deferred warm-up (previously ran on import): fire once, in background.
+  void fb.testFirestoreConnection().catch(() => {});
+  return { db: fb.db, fs };
+}
+function getFirestoreLazy(): Promise<{ db: FirestoreDb; fs: FirestoreSdk }> {
+  if (!firestoreLazy) {
+    firestoreLazy = loadFirestoreLazy().catch((err) => {
+      firestoreLazy = null;
+      throw err;
+    });
+  }
+  return firestoreLazy;
+}
 
 const STORAGE_KEY = 'theoria_orders';
 const OUTBOX_KEY = 'theoria_outbox_pending';
@@ -357,9 +368,10 @@ export async function getOrders(since = 0): Promise<PlacedOrder[]> {
   // 2. Firestore direct read — best-effort only. Production rules deny client
   // reads (server API is the gate), so permission-denied is expected and quiet.
   try {
-    const ordersCol = collection(db, FIRESTORE_ORDERS_COLLECTION);
-    const q = query(ordersCol, orderBy('createdAt', 'desc'));
-    const snapshot = await getDocs(q);
+    const { db, fs } = await getFirestoreLazy();
+    const ordersCol = fs.collection(db, FIRESTORE_ORDERS_COLLECTION);
+    const q = fs.query(ordersCol, fs.orderBy('createdAt', 'desc'));
+    const snapshot = await fs.getDocs(q);
 
     if (!snapshot.empty) {
       snapshot.forEach((docSnap) => {
@@ -471,8 +483,9 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
 
   // 1. Best-effort Cloud Firestore create (never blocks the order on failure).
   try {
-    const orderDocRef = doc(db, FIRESTORE_ORDERS_COLLECTION, preparedOrder.id);
-    await setDoc(orderDocRef, { ...preparedOrder, syncStatus: 'pending' });
+    const { db, fs } = await getFirestoreLazy();
+    const orderDocRef = fs.doc(db, FIRESTORE_ORDERS_COLLECTION, preparedOrder.id);
+    await fs.setDoc(orderDocRef, { ...preparedOrder, syncStatus: 'pending' });
   } catch (firestoreErr) {
     if (!isFirestorePermissionError(firestoreErr)) {
       console.warn('Firestore save notice (API remains source of truth):', firestoreErr);
@@ -516,7 +529,8 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
         saveToLocal(preparedOrder);
         // Best-effort: mirror server-confirmed doc to Firestore (create-only rules).
         try {
-          await setDoc(doc(db, FIRESTORE_ORDERS_COLLECTION, preparedOrder.id), { ...preparedOrder });
+          const { db, fs } = await getFirestoreLazy();
+          await fs.setDoc(fs.doc(db, FIRESTORE_ORDERS_COLLECTION, preparedOrder.id), { ...preparedOrder });
         } catch {
           // ignore — server already durable
         }
@@ -638,11 +652,12 @@ export async function updateOrderStatus(
 
   // 2. Best-effort Firestore mirror (expected to be denied by rules)
   try {
-    const orderDocRef = doc(db, FIRESTORE_ORDERS_COLLECTION, orderId);
+    const { db, fs } = await getFirestoreLazy();
+    const orderDocRef = fs.doc(db, FIRESTORE_ORDERS_COLLECTION, orderId);
     const updates: Record<string, unknown> = {};
     if (status) updates.status = status;
     if (notes !== undefined) updates.notes = notes;
-    await updateDoc(orderDocRef, updates);
+    await fs.updateDoc(orderDocRef, updates);
   } catch (err) {
     if (!isFirestorePermissionError(err)) {
       console.warn('Firestore updateDoc notice:', err);
@@ -686,8 +701,9 @@ export async function deleteOrder(orderId: string): Promise<boolean> {
 
   // Best-effort Firestore mirror (expected denied)
   try {
-    const orderDocRef = doc(db, FIRESTORE_ORDERS_COLLECTION, orderId);
-    await deleteDoc(orderDocRef);
+    const { db, fs } = await getFirestoreLazy();
+    const orderDocRef = fs.doc(db, FIRESTORE_ORDERS_COLLECTION, orderId);
+    await fs.deleteDoc(orderDocRef);
   } catch (err) {
     if (!isFirestorePermissionError(err)) {
       console.warn('Firestore deleteDoc notice:', err);
@@ -735,12 +751,15 @@ export function subscribeToRealtimeOrders(callbacks: {
 
   // 1. Best-effort Firestore onSnapshot (production rules deny client reads,
   // so permission-denied is the normal closed state — stay quiet, polling covers it).
-  try {
-    const ordersCol = collection(db, FIRESTORE_ORDERS_COLLECTION);
-    const q = query(ordersCol, orderBy('createdAt', 'desc'));
+  // Lazy: the SDK chunk loads in the background; polling + SSE cover the gap.
+  getFirestoreLazy()
+    .then(({ db, fs }) => {
+      if (isClosed) return;
+      const ordersCol = fs.collection(db, FIRESTORE_ORDERS_COLLECTION);
+      const q = fs.query(ordersCol, fs.orderBy('createdAt', 'desc'));
 
-    unsubscribeFirestore = onSnapshot(
-      q,
+      unsubscribeFirestore = fs.onSnapshot(
+        q,
       (snapshot) => {
         callbacks.onConnectionChange?.(true);
         snapshot.docChanges().forEach((change) => {
@@ -770,19 +789,20 @@ export function subscribeToRealtimeOrders(callbacks: {
           }
         });
       },
-      (error) => {
-        if (!isFirestorePermissionError(error)) {
-          console.warn('Firestore onSnapshot subscription warning:', error);
+        (error) => {
+          if (!isFirestorePermissionError(error)) {
+            console.warn('Firestore onSnapshot subscription warning:', error);
+          }
+          // Do NOT flip connection to false here: server-API polling is the
+          // real connection signal on locked-down rules.
         }
-        // Do NOT flip connection to false here: server-API polling is the
-        // real connection signal on locked-down rules.
+      );
+    })
+    .catch((err) => {
+      if (!isFirestorePermissionError(err)) {
+        console.warn('Could not initialize Firestore onSnapshot listener:', err);
       }
-    );
-  } catch (err) {
-    if (!isFirestorePermissionError(err)) {
-      console.warn('Could not initialize Firestore onSnapshot listener:', err);
-    }
-  }
+    });
 
   // 2. Server-Sent Events (SSE) stream for real-time notifications across multiple devices/phones
   let eventSource: EventSource | null = null;

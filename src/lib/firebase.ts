@@ -80,5 +80,7 @@ export async function testFirestoreConnection(): Promise<boolean> {
   }
 }
 
-// Automatically initiate test in background
-testFirestoreConnection();
+// NOTE: no on-import connection test — this module is lazy-loaded (see
+// getFirestoreLazy in services/orderService.ts), which fires
+// testFirestoreConnection() once in the background after the SDK loads.
+// Importing this module must never trigger network on landing paint.

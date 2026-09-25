@@ -9,7 +9,7 @@ export const Footer: React.FC = () => {
     <footer id="main-footer" className="w-full bg-[#0a0e1a] border-t border-[#2a3a48]/20 py-8 px-4 sm:px-8 mt-6 overflow-hidden">
       <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#a0b4c4]">
         <div className="flex items-center gap-2">
-          <img alt="Theoria Logo" className="h-6 w-auto object-contain rounded" src={ASSETS.footerLogo} />
+          <img alt="Theoria Logo" width={512} height={279} loading="lazy" decoding="async" className="h-6 w-auto object-contain rounded" src={ASSETS.footerLogo} />
           <span className="font-bold text-white">Theoria Algeria</span>
         </div>
         <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">

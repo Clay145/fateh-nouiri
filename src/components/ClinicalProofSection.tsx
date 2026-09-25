@@ -40,7 +40,10 @@ export const ClinicalProofSection: React.FC = () => {
                 alt="مخطط بياني سريري: هبوط التوتر العصبي خلال 15 دقيقة مع مساج العين الحراري مقابل التصفح بالهاتف"
                 className="w-full h-auto object-contain rounded-xl bg-[#0a0e1a]"
                 src={ASSETS.clinicalChart}
+                width={512}
+                height={341}
                 loading="lazy"
+                decoding="async"
               />
             </div>
             <p className="text-[11px] text-[#a0b4c4]/80 mt-2 text-center">

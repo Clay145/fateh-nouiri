@@ -11,6 +11,18 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    build: {
+      chunkSizeWarningLimit: 600,
+      rollupOptions: {
+        output: {
+          // React core in its own long-lived chunk; firebase/* splits
+          // automatically via dynamic import (see getFirestoreLazy).
+          manualChunks: {
+            'vendor-react': ['react', 'react-dom'],
+          },
+        },
+      },
+    },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.

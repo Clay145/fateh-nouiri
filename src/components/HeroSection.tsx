@@ -113,7 +113,11 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               alt="صورة واقعية لتجربة جهاز مساج العين الحراري الذكي Theoria أثناء الاسترخاء"
               className="w-full h-72 sm:h-96 object-cover object-center group-hover:scale-105 transition-transform duration-700"
               src={ASSETS.lifestyle}
+              width={512}
+              height={343}
               loading="eager"
+              fetchPriority="high"
+              decoding="async"
             />
             <div className="absolute bottom-3 right-3 left-3 p-2.5 sm:p-3 rounded-xl bg-[#0f1524]/90 backdrop-blur-md border border-[#7dd3fc]/25 flex items-center justify-between shadow-xl">
               <div className="flex items-center gap-2">
@@ -133,6 +137,10 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             <img
               src={ASSETS.deviceFolded}
               alt="جهاز Theoria القابل للطي"
+              width={512}
+              height={512}
+              loading="lazy"
+              decoding="async"
               className="w-10 h-10 rounded-lg bg-[#0a0e1a]/80 object-contain p-1 border border-[#7dd3fc]/20 shrink-0"
             />
             <div className="flex-1 text-right">
