@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 import { FAQ_DATA } from '../data/faqs';
 
 export const FaqSection: React.FC = () => {
@@ -27,9 +28,10 @@ export const FaqSection: React.FC = () => {
             >
               <div className="font-bold text-xs sm:text-sm text-white flex items-center justify-between gap-3">
                 <span>{faq.question}</span>
-                <span className={`material-symbols-outlined text-[#7dd3fc] text-base transition-transform ${isOpen ? 'rotate-180' : ''}`}>
-                  expand_more
-                </span>
+                <ChevronDown
+                  size={16}
+                  className={`text-[#7dd3fc] transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                />
               </div>
               {isOpen && (
                 <p className="text-xs text-[#a0b4c4] mt-2 leading-relaxed">{faq.answer}</p>

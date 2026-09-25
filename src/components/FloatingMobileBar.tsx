@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Truck, ShieldCheck, CircleCheck, ArrowDown } from 'lucide-react';
 import { trackAddToCartClick } from '../services/analyticsService';
 
 function formatDz(n: number): string {
@@ -148,11 +149,11 @@ export const FloatingMobileBar: React.FC = () => {
               {formatDz(pkg.price)}
             </span>
             <span className="text-[11px] text-emerald-400 font-bold bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
-              <span className="material-symbols-outlined text-[13px]">local_shipping</span> توصيل مجاني (0 دج)
+              <Truck size={13} /> توصيل مجاني (0 دج)
             </span>
           </div>
           <div className="text-[11px] text-[#88b4cc] hidden sm:flex items-center gap-1 font-semibold">
-            <span className="material-symbols-outlined text-sm">shield</span>
+            <ShieldCheck size={14} />
             <span>الدفع عند الاستلام بعد الفحص</span>
           </div>
         </div>
@@ -167,9 +168,11 @@ export const FloatingMobileBar: React.FC = () => {
                 : 'w-full py-3.5 px-4 rounded-xl sm:rounded-full bg-[#7dd3fc] hover:bg-[#c8eaff] text-[#001f2e] font-headline font-black text-xs sm:text-sm tracking-wide shadow-[0_0_25px_rgba(125,211,252,0.35)] transition-all flex items-center justify-center gap-2 active:scale-[0.98]'
             }
           >
-            <span className="material-symbols-outlined text-lg" id="dock-action-icon">
-              {isValid ? 'check_circle' : 'arrow_downward'}
-            </span>
+            {isValid ? (
+              <CircleCheck size={18} id="dock-action-icon" />
+            ) : (
+              <ArrowDown size={18} id="dock-action-icon" />
+            )}
             <span id="dock-action-text">
               {isValid ? '🚀 إتمام وتأكيد الطلب الآن بنقرة واحدة (جاهز للإرسال)' : 'أدخل معلومات التوصيل لطلب جهازك ⬇️'}
             </span>

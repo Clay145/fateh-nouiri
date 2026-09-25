@@ -1,4 +1,13 @@
 import React from 'react';
+import {
+  BadgeCheck,
+  Truck,
+  ArrowLeft,
+  ArrowLeftRight,
+  ShieldCheck,
+  BatteryCharging,
+  Thermometer,
+} from 'lucide-react';
 import { ASSETS } from '../data/constants';
 import { trackAddToCartClick } from '../services/analyticsService';
 
@@ -27,7 +36,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
         {/* Copy (7 cols) */}
         <div className="lg:col-span-7 flex flex-col items-start text-right space-y-4">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#141c2e]/80 border border-[#7dd3fc]/30 text-[#7dd3fc] text-xs font-semibold">
-            <span className="material-symbols-outlined text-sm">verified</span>
+            <BadgeCheck size={14} />
             <span>الحل الطبيعي المعتمد لجفاف العين والشقيقة وإجهاد الشاشات الطويل</span>
           </div>
 
@@ -49,12 +58,12 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               </div>
               <span className="px-2 py-0.5 text-xs font-bold rounded bg-[#3d2060] text-[#e8d0ff]">وفر 36%</span>
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#7dd3fc]/20 text-[#7dd3fc] text-xs font-bold border border-[#7dd3fc]/30 shadow-[0_0_15px_rgba(125,211,252,0.3)]">
-                <span className="material-symbols-outlined text-sm">local_shipping</span>
+                <Truck size={14} />
                 <span>+ توصيل مجاني 0 دج (وفرت 800 دج)</span>
               </span>
             </div>
             <div className="text-xs text-[#88b4cc] flex items-center gap-1.5 font-medium">
-              <span className="material-symbols-outlined text-base">verified</span>
+              <BadgeCheck size={16} />
               <span>معاينة وفحص الطرد بيدك قبل دفع أي فلس للموزع</span>
             </div>
           </div>
@@ -68,7 +77,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               className="inline-flex items-center justify-center gap-2.5 px-7 py-3.5 rounded-full bg-[#7dd3fc] text-[#001f2e] font-headline font-bold text-sm sm:text-base shadow-[0_0_30px_rgba(125,211,252,0.35)] hover:bg-[#c8eaff] transition-all cursor-pointer"
             >
               <span>اطلب الآن - عاين جهازك قبل الدفع</span>
-              <span className="material-symbols-outlined text-lg rotate-180">arrow_forward</span>
+              <ArrowLeft size={18} />
             </a>
             <a
               id="hero-proof-cta"
@@ -79,7 +88,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               }}
               className="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-full bg-[#141c2e] border border-[#4a6070]/30 text-[#e0e8f0] hover:bg-[#1a2438] transition-all text-xs sm:text-sm font-semibold cursor-pointer"
             >
-              <span className="material-symbols-outlined text-[#7dd3fc] text-base">swap_horiz</span>
+              <ArrowLeftRight size={16} className="text-[#7dd3fc]" />
               <span>المقارنة الصادقة (الحياة قبل وبعد)</span>
             </a>
           </div>
@@ -87,11 +96,11 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
           {/* Trust badges */}
           <div className="grid grid-cols-3 gap-2 w-full pt-1 text-[11px] text-[#a0b4c4]">
             <div className="flex items-center gap-1.5 bg-[#0a0e1a]/80 p-2 rounded-lg border border-[#7dd3fc]/30 text-[#7dd3fc] font-bold">
-              <span className="material-symbols-outlined text-sm">local_shipping</span>
+              <Truck size={14} />
               <span>توصيل مجاني وسريع لـ 58 ولاية</span>
             </div>
             <div className="flex items-center gap-1.5 bg-[#0a0e1a]/50 p-2 rounded-lg border border-[#2a3a48]/20">
-              <span className="material-symbols-outlined text-[#7dd3fc] text-sm">verified_user</span>
+              <ShieldCheck size={14} className="text-[#7dd3fc]" />
               <span>ضمان استبدال 14 يوم</span>
             </div>
             <button
@@ -100,7 +109,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               className="flex items-center gap-1.5 bg-[#0a0e1a]/50 p-2 rounded-lg border border-[#2a3a48]/20 hover:border-[#c8a0f0]/50 transition-all text-right cursor-pointer"
               title="اضغط للاستماع لأصوات الاسترخاء المدمجة"
             >
-              <span className="material-symbols-outlined text-[#c8a0f0] text-sm">battery_charging_full</span>
+              <BatteryCharging size={14} className="text-[#c8a0f0]" />
               <span>{soundPlaying ? 'جاري التشغيل 🎵 - شحن USB يدوم أسبوعاً' : 'شحن USB يدوم أسبوعاً'}</span>
             </button>
           </div>
@@ -122,7 +131,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             <div className="absolute bottom-3 right-3 left-3 p-2.5 sm:p-3 rounded-xl bg-[#0f1524]/90 backdrop-blur-md border border-[#7dd3fc]/25 flex items-center justify-between shadow-xl">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-[#7dd3fc]/20 text-[#7dd3fc] flex items-center justify-center font-bold shrink-0">
-                  <span className="material-symbols-outlined text-lg">thermostat</span>
+                  <Thermometer size={18} />
                 </div>
                 <div>
                   <p className="text-xs font-bold text-white">حرارة علاجية دقيقة 42°C</p>
@@ -137,8 +146,8 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             <img
               src={ASSETS.deviceFolded}
               alt="جهاز Theoria القابل للطي"
-              width={512}
-              height={512}
+              width={128}
+              height={128}
               loading="lazy"
               decoding="async"
               className="w-10 h-10 rounded-lg bg-[#0a0e1a]/80 object-contain p-1 border border-[#7dd3fc]/20 shrink-0"

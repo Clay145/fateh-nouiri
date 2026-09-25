@@ -1,4 +1,5 @@
 import React from 'react';
+import { X, CircleCheck, Stethoscope, CircleX, Sparkles, ArrowLeft } from 'lucide-react';
 import { ASSETS } from '../data/constants';
 import { trackAddToCartClick } from '../services/analyticsService';
 
@@ -28,11 +29,11 @@ export const ProblemSection: React.FC = () => {
             decoding="async"
           />
           <div className="absolute top-3 right-3 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-md text-[11px] font-bold text-[#ff6b6b] flex items-center gap-1 border border-[#ff6b6b]/30">
-            <span className="material-symbols-outlined text-sm">close</span>
+            <X size={14} />
             <span>الحل المؤقت: صداع وقطرات</span>
           </div>
           <div className="absolute bottom-3 left-3 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-md text-[11px] font-bold text-[#7dd3fc] flex items-center gap-1 border border-[#7dd3fc]/30">
-            <span className="material-symbols-outlined text-sm">check_circle</span>
+            <CircleCheck size={14} />
             <span>الحل الجذري: راحة تامة</span>
           </div>
         </div>
@@ -42,24 +43,24 @@ export const ProblemSection: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-right">
             <div className="p-4 rounded-xl bg-[#3d1414]/10 border border-[#ff6b6b]/25 space-y-2.5">
               <div className="flex items-center gap-2 text-[#ff6b6b] font-bold text-sm">
-                <span className="material-symbols-outlined text-lg">medical_services</span>
+                <Stethoscope size={18} />
                 <span>الحلول الاستهلاكية المرهقة</span>
               </div>
               <ul className="text-xs text-[#a0b4c4] space-y-2">
                 <li className="flex items-start gap-1.5">
-                  <span className="material-symbols-outlined text-[#ff6b6b] text-sm shrink-0 mt-0.5">cancel</span>
+                  <CircleX size={14} className="text-[#ff6b6b] shrink-0 mt-0.5" />
                   <span><strong>قطرات العين الكيميائية:</strong> ترطيب لحظي ينتهي بعد 20 دقيقة، مع مصاريف شهرية لا تنتهي.</span>
                 </li>
                 <li className="flex items-start gap-1.5">
-                  <span className="material-symbols-outlined text-[#ff6b6b] text-sm shrink-0 mt-0.5">cancel</span>
+                  <CircleX size={14} className="text-[#ff6b6b] shrink-0 mt-0.5" />
                   <span><strong>مسكنات الباراسيتامول والبروفين:</strong> إخفاء مؤقت للألم مع إرهاق المعدة دون فك التشنج العضلي.</span>
                 </li>
                 <li className="flex items-start gap-1.5">
-                  <span className="material-symbols-outlined text-[#ff6b6b] text-sm shrink-0 mt-0.5">cancel</span>
+                  <CircleX size={14} className="text-[#ff6b6b] shrink-0 mt-0.5" />
                   <span><strong>الكمادات المبللة السريعة:</strong> تبرد في 90 ثانية وتترك فوضى وتبلل الفراش.</span>
                 </li>
                 <li className="flex items-start gap-1.5">
-                  <span className="material-symbols-outlined text-[#ff6b6b] text-sm shrink-0 mt-0.5">cancel</span>
+                  <CircleX size={14} className="text-[#ff6b6b] shrink-0 mt-0.5" />
                   <span><strong>أرق التصفح الليلي:</strong> الضوء الأزرق يعطل إفراز الميلاتونين وتستيقظ مرهقاً.</span>
                 </li>
               </ul>
@@ -67,24 +68,24 @@ export const ProblemSection: React.FC = () => {
 
             <div className="p-4 rounded-xl bg-[#0e4d6e]/20 border border-[#7dd3fc]/30 space-y-2.5">
               <div className="flex items-center gap-2 text-[#7dd3fc] font-bold text-sm">
-                <span className="material-symbols-outlined text-lg">spa</span>
+                <Sparkles size={18} />
                 <span>جهاز Theoria الذكي</span>
               </div>
               <ul className="text-xs text-[#a0b4c4] space-y-2">
                 <li className="flex items-start gap-1.5">
-                  <span className="material-symbols-outlined text-[#7dd3fc] text-sm shrink-0 mt-0.5">check_circle</span>
+                  <CircleCheck size={14} className="text-[#7dd3fc] shrink-0 mt-0.5" />
                   <span><strong>إذابة انسداد الغدد الدمعية:</strong> حرارة 42° تعيد إنتاج طبقة الزيت الطبيعية الحامية لقرنيتك.</span>
                 </li>
                 <li className="flex items-start gap-1.5">
-                  <span className="material-symbols-outlined text-[#7dd3fc] text-sm shrink-0 mt-0.5">check_circle</span>
+                  <CircleCheck size={14} className="text-[#7dd3fc] shrink-0 mt-0.5" />
                   <span><strong>ضغط الصدغين المهدئ:</strong> تفريغ شحنات تشنج عضلات الحاجب وفروة الرأس طبيعياً.</span>
                 </li>
                 <li className="flex items-start gap-1.5">
-                  <span className="material-symbols-outlined text-[#7dd3fc] text-sm shrink-0 mt-0.5">check_circle</span>
+                  <CircleCheck size={14} className="text-[#7dd3fc] shrink-0 mt-0.5" />
                   <span><strong>استثمار يدوم لسنوات:</strong> اشتره مرة واحدة ووفر ملايين السنتيمات على الصيدليات وجلسات السبا.</span>
                 </li>
                 <li className="flex items-start gap-1.5">
-                  <span className="material-symbols-outlined text-[#7dd3fc] text-sm shrink-0 mt-0.5">check_circle</span>
+                  <CircleCheck size={14} className="text-[#7dd3fc] shrink-0 mt-0.5" />
                   <span><strong>عزل ضوئي 100% وبلوتوث:</strong> اسمع رقية شرعية، قرآناً، أو أصوات مطر ونَم في دقائق معدودة.</span>
                 </li>
               </ul>
@@ -103,7 +104,7 @@ export const ProblemSection: React.FC = () => {
               }}
             >
               <span>احجز نسختك الآن قبل نفاد الكمية</span>
-              <span className="material-symbols-outlined text-sm rotate-180">arrow_forward</span>
+              <ArrowLeft size={14} />
             </a>
           </div>
         </div>

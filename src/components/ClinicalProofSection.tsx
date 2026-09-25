@@ -1,27 +1,28 @@
 import React from 'react';
+import { Bath, Wind, Headphones, Timer, Brain, type LucideIcon } from 'lucide-react';
 import { ASSETS } from '../data/constants';
 
-const MECHANISMS = [
+const MECHANISMS: { icon: LucideIcon; title: string; desc: string; accent: 'primary' | 'tertiary' }[] = [
   {
-    icon: 'hot_tub',
+    icon: Bath,
     title: '1. علاج غدد الميبوميان 42°C',
     desc: 'حرارة ثابتة ومهدئة تذيب الدهون العالقة في حواف الجفون وتفرز الترطيب الطبيعي لمكافحة جفاف الشاشات نهائياً.',
     accent: 'primary' as const,
   },
   {
-    icon: 'air',
+    icon: Wind,
     title: '2. ضغط الصدغين والحاجبين',
     desc: 'وسائد ذكية ثنائية الطبقات تفرغ تشنج الشقيقة فور استشعار بدايتها لترخي عضلات الرأس المشدودة فوراً.',
     accent: 'primary' as const,
   },
   {
-    icon: 'headphones',
+    icon: Headphones,
     title: '3. بلوتوث وعزل ضوء 100%',
     desc: 'سواد تام بدون أي تسريب للضوء الخارجي مع صوت محيطي هادئ (قرآن، رقية، أو صوت أمواج) لتهدئة الدماغ المشحون.',
     accent: 'tertiary' as const,
   },
   {
-    icon: 'timer',
+    icon: Timer,
     title: '4. إغلاق تلقائي بعد 15 دقيقة',
     desc: 'لا حاجة للاستيقاظ لإيقافه؛ يتوقف الجهاز ذكياً بعد اكتمال الدورة لتستمر في نومك العميق حتى الصباح براحة وأمان.',
     accent: 'primary' as const,
@@ -54,7 +55,7 @@ export const ClinicalProofSection: React.FC = () => {
           {/* Mechanisms */}
           <div className="lg:col-span-6 space-y-4 text-right">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-[#0e4d6e]/40 text-[#7dd3fc] text-xs font-bold">
-              <span className="material-symbols-outlined text-sm">psychology</span>
+              <Brain size={14} />
               <span>4 تقنيات مدمجة تحاكي جلسات الطب الصيني والسبا</span>
             </div>
             <h2 className="text-xl sm:text-3xl font-headline font-bold text-white leading-tight">كيف يجعلك Theoria "تنام كالحجر" ويزيل إجهاد اليوم؟</h2>
@@ -62,7 +63,7 @@ export const ClinicalProofSection: React.FC = () => {
               {MECHANISMS.map((m) => (
                 <div key={m.title} className="bg-[#1a2438]/60 p-3.5 rounded-xl border border-[#2a3a48]/30">
                   <div className={`flex items-center gap-2 font-bold text-xs mb-1 ${m.accent === 'tertiary' ? 'text-[#c8a0f0]' : 'text-[#7dd3fc]'}`}>
-                    <span className="material-symbols-outlined text-base">{m.icon}</span>
+                    <m.icon size={16} />
                     <span>{m.title}</span>
                   </div>
                   <p className="text-[11px] text-[#a0b4c4] leading-relaxed">{m.desc}</p>

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ASSETS } from '../data/constants';
-import { Volume2, Package, Menu, X } from 'lucide-react';
+import { Volume2, Package, Menu, X, ArrowLeft } from 'lucide-react';
 import { trackAddToCartClick } from '../services/analyticsService';
 
 interface NavbarProps {
@@ -47,8 +47,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           <img
             src={ASSETS.logo}
             alt="Theoria Logo"
-            width={512}
-            height={279}
+            width={192}
+            height={105}
             decoding="async"
             className="h-7 sm:h-8 w-auto object-contain rounded-md"
           />
@@ -101,7 +101,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             className="bg-[#7dd3fc] hover:bg-[#c8eaff] text-[#001f2e] px-3.5 py-2 sm:px-5 sm:py-2 rounded-full text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(125,211,252,0.3)] transition-all transform active:scale-95 flex items-center gap-1.5 cursor-pointer"
           >
             <span>9,500 دج</span>
-            <span className="material-symbols-outlined text-sm rotate-180">arrow_forward</span>
+            <ArrowLeft size={14} />
           </a>
 
           <button

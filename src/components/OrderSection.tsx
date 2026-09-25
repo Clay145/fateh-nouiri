@@ -1,4 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
+import {
+  AlarmClock,
+  Gift,
+  User,
+  Phone,
+  MapPin,
+  ChevronDown,
+  HousePlus,
+  CircleCheck,
+  ShoppingBag,
+  BadgeCheck,
+  Lock,
+  Headset,
+} from 'lucide-react';
 import { STORE_PACKAGES } from '../data/packages';
 import { ALGERIA_WILAYAS } from '../data/wilayas';
 import { PackageOption, PlacedOrder } from '../types';
@@ -249,7 +263,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
         {/* Section Header */}
         <div className="text-center max-w-xl mx-auto mb-8 space-y-2">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#3d1414]/60 border border-[#ff6b6b]/30 text-[#ff6b6b] text-xs font-bold">
-            <span className="material-symbols-outlined text-sm">alarm</span>
+            <AlarmClock size={14} />
             <span>الدفعة الحالية: بقي 11 قطعة فقط بهذا السعر المخفض</span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-headline font-black text-white">
@@ -264,7 +278,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
           {/* Gift banner */}
           <div className="p-3.5 rounded-2xl bg-gradient-to-l from-[#7dd3fc]/20 via-[#1a2438] to-[#7dd3fc]/10 border-2 border-[#7dd3fc]/40 shadow-[0_0_25px_rgba(125,211,252,0.2)] flex items-center gap-3 text-right">
             <div className="w-10 h-10 rounded-xl bg-[#7dd3fc] text-[#001f2e] flex items-center justify-center shrink-0">
-              <span className="material-symbols-outlined text-2xl">redeem</span>
+              <Gift size={24} />
             </div>
             <div>
               <p className="text-xs sm:text-sm font-black text-[#7dd3fc]">🎁 هدية خاصة لطلبك اليوم: التوصيل مجاني 100% (0 دج) على حسابنا لباب بيتك</p>
@@ -339,7 +353,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
             <div className="space-y-1 text-right">
               <label className="text-xs font-semibold text-white" htmlFor="fullname">الاسم واللقب بالكامل *</label>
               <div className="relative">
-                <span className="material-symbols-outlined absolute right-3 top-3 text-[#a0b4c4] text-base">person</span>
+                <User size={16} className="absolute right-3 top-3 text-[#a0b4c4]" />
                 <input
                   id="fullname"
                   type="text"
@@ -365,7 +379,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
             <div className="space-y-1 text-right">
               <label className="text-xs font-semibold text-white" htmlFor="phone">رقم الهاتف (لتأكيد شحن الطرد) *</label>
               <div className="relative">
-                <span className="material-symbols-outlined absolute right-3 top-3 text-[#a0b4c4] text-base">call</span>
+                <Phone size={16} className="absolute right-3 top-3 text-[#a0b4c4]" />
                 <input
                   id="phone"
                   type="tel"
@@ -393,7 +407,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
             <div className="space-y-1 text-right">
               <label className="text-xs font-semibold text-white" htmlFor="wilaya">الولاية (58 ولاية) *</label>
               <div className="relative">
-                <span className="material-symbols-outlined absolute right-3 top-3 text-[#a0b4c4] text-base">location_on</span>
+                <MapPin size={16} className="absolute right-3 top-3 text-[#a0b4c4]" />
                 <select
                   id="wilaya"
                   required
@@ -422,7 +436,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
                     </option>
                   ))}
                 </select>
-                <span className="material-symbols-outlined absolute left-3 top-2.5 text-[#a0b4c4] pointer-events-none text-base">arrow_drop_down</span>
+                <ChevronDown size={16} className="absolute left-3 top-2.5 text-[#a0b4c4] pointer-events-none" />
               </div>
               {fieldErrors.wilaya && (
                 <p id="wilaya-error" role="alert" className="text-xs text-[#ff6b6b] mt-1">{fieldErrors.wilaya}</p>
@@ -432,7 +446,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
             <div className="space-y-1 text-right">
               <label className="text-xs font-semibold text-white" htmlFor="address">البلدية أو الحي *</label>
               <div className="relative">
-                <span className="material-symbols-outlined absolute right-3 top-3 text-[#a0b4c4] text-base">home_pin</span>
+                <HousePlus size={16} className="absolute right-3 top-3 text-[#a0b4c4]" />
                 <input
                   id="address"
                   type="text"
@@ -471,7 +485,7 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
             <div className="flex justify-between items-center text-[#a0b4c4]">
               <span>رسوم التوصيل لكافة الـ 58 ولاية:</span>
               <span className="font-black text-[#7dd3fc] flex items-center gap-1">
-                <span className="material-symbols-outlined text-sm">check_circle</span> 0 دج مجاناً تماماً
+                <CircleCheck size={14} /> 0 دج مجاناً تماماً
               </span>
             </div>
             <div className="pt-1.5 border-t border-[#2a3a48]/20 flex justify-between items-center font-black text-sm text-white">
@@ -492,14 +506,14 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
             disabled={isSubmitting}
             className="w-full py-4 rounded-full bg-[#7dd3fc] hover:bg-[#c8eaff] text-[#001f2e] font-headline font-black text-base tracking-wide shadow-[0_0_35px_rgba(125,211,252,0.4)] hover:shadow-[0_0_50px_rgba(125,211,252,0.6)] active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-75 cursor-pointer"
           >
-            <span className="material-symbols-outlined text-xl">shopping_bag</span>
+            <ShoppingBag size={20} />
             <span id="form-submit-text">{isSubmitting ? 'جاري إرسال طلبكم وتثبيته...' : 'تأكيد الطلب الآن - الدفع نقداً بعد المعاينة عند الباب'}</span>
           </button>
 
           <div className="flex flex-wrap items-center justify-center gap-4 text-[11px] text-[#a0b4c4] pt-1">
-            <span className="flex items-center gap-1"><span className="material-symbols-outlined text-[#7dd3fc] text-sm">verified</span> ضمان 14 يوماً للاستبدال</span>
-            <span className="flex items-center gap-1"><span className="material-symbols-outlined text-[#7dd3fc] text-sm">lock</span> بيانات مشفرة وسرية</span>
-            <span className="flex items-center gap-1"><span className="material-symbols-outlined text-[#7dd3fc] text-sm">support_agent</span> خدمة ما بعد البيع 7/7</span>
+            <span className="flex items-center gap-1"><BadgeCheck size={14} className="text-[#7dd3fc]" /> ضمان 14 يوماً للاستبدال</span>
+            <span className="flex items-center gap-1"><Lock size={14} className="text-[#7dd3fc]" /> بيانات مشفرة وسرية</span>
+            <span className="flex items-center gap-1"><Headset size={14} className="text-[#7dd3fc]" /> خدمة ما بعد البيع 7/7</span>
           </div>
         </form>
       </div>
