@@ -14,8 +14,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="preconnect" href="https://connect.facebook.net" />
-    <!-- LCP hero image: same-origin WebP, discovered while the JS bundle parses -->
-    <link rel="preload" as="image" href="/img/lifestyle.webp" fetchpriority="high" />
+    <!-- LCP hero image is preloaded dynamically by HeroSection (storefront only),
+         so admin / thank-you routes never fetch it. See HeroSection.tsx. -->
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
 
     <!-- Facebook Domain Verification -->

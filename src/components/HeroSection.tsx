@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   BadgeCheck,
   Truck,
@@ -20,6 +20,21 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
   onOpenSoundPreview,
   soundPlaying,
 }) => {
+  // Storefront-only LCP preload: this component mounts solely on the store
+  // route (admin / thank-you return early in App.tsx), so injecting here
+  // avoids the "preloaded but not used" warning plus wasted bytes elsewhere.
+  useEffect(() => {
+    const link = document.createElement('link');
+    link.rel = 'preload';
+    link.as = 'image';
+    link.href = ASSETS.lifestyle;
+    link.fetchPriority = 'high';
+    document.head.appendChild(link);
+    return () => {
+      document.head.removeChild(link);
+    };
+  }, []);
+
   const goOrder = (e: React.MouseEvent, label: string) => {
     e.preventDefault();
     trackAddToCartClick(label);
