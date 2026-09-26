@@ -11,6 +11,10 @@ import {
   subscribeToRealtimeOrders,
   playOrderNotificationSound,
   clearAllOrders,
+  shipToEcom,
+  shipBulkToEcom,
+  getEcomStatus,
+  EcomDeliveryMode,
 } from '../services/orderService';
 import {
   ShieldAlert,
@@ -23,6 +27,7 @@ import {
   CheckCircle2,
   Clock,
   Truck,
+  Send,
   XCircle,
   DollarSign,
   Package,
@@ -89,6 +94,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
   const [tempNoteText, setTempNoteText] = useState('');
   const [copiedPhoneId, setCopiedPhoneId] = useState<string | null>(null);
 
+  // Ecom Delivery manual push state
+  const [ecomConfigured, setEcomConfigured] = useState<boolean | null>(null);
+  const [shipModes, setShipModes] = useState<Record<string, EcomDeliveryMode>>({});
+  const [shippingIds, setShippingIds] = useState<Record<string, boolean>>({});
+  const [isBulkShipping, setIsBulkShipping] = useState(false);
+
   // Transient action error (server write failed after optimistic update).
   const [actionError, setActionError] = useState<string | null>(null);
   const actionErrorTimer = useRef<number | null>(null);
@@ -112,6 +123,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
     setApiDiag(getLastOrdersApiStatus());
     setIsLoading(false);
   };
+
+  // Ecom Delivery config probe (booleans only — keys stay server-side)
+  useEffect(() => {
+    getEcomStatus()
+      .then((s) => {
+        if (s) setEcomConfigured(s.configured);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     loadInitialOrders();
@@ -201,6 +221,61 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
         setOrders(snapshot);
         flashActionError('تعذر حذف الطلب على الخادم — أعد المحاولة.');
       }
+    }
+  };
+
+  // Ecom Delivery — manual push of one order (Domicile / Stopdesk per order)
+  const getShipMode = (order: PlacedOrder): EcomDeliveryMode =>
+    shipModes[order.id] || order.deliveryMode || 'domicile';
+
+  const handleShipToEcom = async (order: PlacedOrder) => {
+    const key = order.id;
+    if (shippingIds[key]) return;
+    setShippingIds((prev) => ({ ...prev, [key]: true }));
+    const mode = getShipMode(order);
+    const result = await shipToEcom(order.id, mode);
+    setShippingIds((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    if (result.success && result.order) {
+      setOrders((prev) => prev.map((o) => (o.id === key ? { ...o, ...result.order } : o)));
+    } else {
+      // Surface server error on the row so a retry keeps the same mode.
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === key
+            ? { ...o, deliveryProvider: 'ecom_delivery', deliveryMode: mode, deliveryStatus: 'failed' as const, deliveryError: result.error || 'فشل الإرسال' }
+            : o
+        )
+      );
+      flashActionError(result.error || 'تعذر الإرسال إلى Ecom — أعد المحاولة.');
+    }
+  };
+
+  // Ecom Delivery — bulk push of filtered confirmed orders (skips already shipped)
+  const handleBulkShipToEcom = async () => {
+    const targets = filteredOrders.filter((o) => o.deliveryStatus !== 'shipped' || !o.deliveryTracking);
+    if (targets.length === 0 || isBulkShipping) return;
+    if (!window.confirm(`إرسال ${targets.length} طلب إلى Ecom Delivery؟ (يتم تخطي المشحونة مسبقاً)`)) return;
+    setIsBulkShipping(true);
+    try {
+      const modes: Record<string, EcomDeliveryMode> = {};
+      targets.forEach((o) => {
+        modes[o.id] = getShipMode(o);
+      });
+      const { results } = await shipBulkToEcom(targets.map((o) => o.id), 'domicile', modes);
+      const data = await getOrders();
+      setOrders(data);
+      const failed = results.filter((r) => !r.success);
+      if (failed.length > 0) {
+        flashActionError(`تم الإرسال جزئياً — فشل ${failed.length} طلب. راجع رسائل الخطأ على الصفوف.`);
+      }
+    } catch (e) {
+      flashActionError(e instanceof Error ? e.message : 'تعذر الإرسال الجماعي — أعد المحاولة.');
+    } finally {
+      setIsBulkShipping(false);
     }
   };
 
@@ -517,6 +592,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
           </div>
         </div>
       )}
+      {ecomConfigured === false && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+          <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center gap-2" dir="rtl">
+            <Truck className="w-4 h-4 shrink-0" />
+            <span>شحن Ecom غير مُعد — أضف ECOM_API_TOKEN و ECOM_API_KEY في Vercel ثم أعد النشر. زر الإرسال سيعمل بعد الإعداد.</span>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
@@ -693,6 +776,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
                 <span>تصدير Excel (CSV)</span>
               </button>
 
+              <button
+                onClick={handleBulkShipToEcom}
+                disabled={isBulkShipping || filteredOrders.filter((o) => o.deliveryStatus !== 'shipped').length === 0}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold bg-orange-500 text-slate-950 hover:bg-orange-400 transition disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_0_20px_rgba(249,115,22,0.2)]"
+                title="إرسال الطلبات المعروضة (غير المشحونة) إلى Ecom Delivery"
+              >
+                <Send className="w-4 h-4" />
+                <span>{isBulkShipping ? 'جارِ الإرسال...' : 'إرسال الكل لـ Ecom'}</span>
+              </button>
+
               {orders.length > 0 && (
                 <button
                   onClick={handleClearDemoOrders}
@@ -803,6 +896,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
                     <th className="py-3.5 px-4">الباقة المختارة</th>
                     <th className="py-3.5 px-4">المبلغ الإجمالي</th>
                     <th className="py-3.5 px-4">حالة الطلب</th>
+                    <th className="py-3.5 px-4">الشحن Ecom</th>
                     <th className="py-3.5 px-4">ملاحظات والتأكيد</th>
                     <th className="py-3.5 px-4 text-center">إجراءات سريعة</th>
                   </tr>
@@ -901,6 +995,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
                               <option value="تم التسليم">تم التسليم</option>
                               <option value="ملغي">ملغي</option>
                             </select>
+                          </div>
+                        </td>
+
+                        {/* Ecom Delivery push */}
+                        <td className="py-4 px-4 whitespace-nowrap min-w-[170px]">
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-1 bg-[#090d16] border border-slate-700 rounded-lg p-0.5 text-[11px] font-bold">
+                              {(['domicile', 'stopdesk'] as EcomDeliveryMode[]).map((m) => (
+                                <button
+                                  key={m}
+                                  onClick={() => setShipModes((prev) => ({ ...prev, [order.id]: m }))}
+                                  disabled={order.deliveryStatus === 'shipped'}
+                                  className={`flex-1 px-2 py-1 rounded-md transition ${
+                                    getShipMode(order) === m
+                                      ? 'bg-orange-500 text-slate-950'
+                                      : 'text-slate-400 hover:text-white'
+                                  } disabled:opacity-50`}
+                                >
+                                  {m === 'domicile' ? 'منزل' : 'مكتب'}
+                                </button>
+                              ))}
+                            </div>
+                            {order.deliveryStatus === 'shipped' && order.deliveryTracking ? (
+                              <div className="text-[11px] font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-2 py-1 text-center" dir="ltr">
+                                {order.deliveryTracking}
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => handleShipToEcom(order)}
+                                disabled={Boolean(shippingIds[order.id])}
+                                className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold bg-orange-500/15 text-orange-300 border border-orange-500/30 hover:bg-orange-500/25 transition disabled:opacity-50"
+                                title="إرسال هذا الطلب إلى Ecom Delivery"
+                              >
+                                <Send className="w-3 h-3" />
+                                <span>{shippingIds[order.id] ? 'جارِ الإرسال...' : 'إرسال لـ Ecom'}</span>
+                              </button>
+                            )}
+                            {order.deliveryStatus === 'failed' && order.deliveryError && (
+                              <div className="text-[10px] text-red-400 font-semibold max-w-[170px] truncate" title={order.deliveryError}>
+                                {order.deliveryError}
+                              </div>
+                            )}
                           </div>
                         </td>
 

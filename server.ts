@@ -15,6 +15,12 @@ import {
 } from './api/_adminAuth';
 import { getMetaAccessToken, getMetaCurrency, getMetaPixelId, META_PIXEL_ID_FALLBACK } from './api/_metaConfig';
 import { handleMetaErrorBody } from './api/_metaToken';
+import {
+  EcomMode,
+  getEcomConfig,
+  isEcomConfigured,
+  shipOrderToEcom,
+} from './api/_ecom';
 
 interface OrderItem {
   id: string;
@@ -40,6 +46,13 @@ interface OrderItem {
   fbp?: string;
   fbc?: string;
   capiStatus?: 'sent' | 'deduplicated' | 'skipped' | 'test_mode' | 'capi_purchase_disabled';
+  // Ecom Delivery push metadata (manual send from admin dashboard)
+  deliveryProvider?: string;
+  deliveryTracking?: string;
+  deliveryStatus?: 'none' | 'shipped' | 'failed';
+  deliveryMode?: 'domicile' | 'stopdesk';
+  deliveryShippedAt?: number;
+  deliveryError?: string | null;
 }
 
 // Meta Conversions API & Pixel Configuration (single source of truth lives
@@ -1230,6 +1243,108 @@ async function startServer() {
       },
     });
   });
+
+  // Ecom Delivery — manual push of a confirmed order (admin only).
+  // POST /api/ecom/ship { orderId, mode: 'domicile' | 'stopdesk' }
+  function normalizeEcomMode(v: unknown): EcomMode {
+    const s = String(v || 'domicile').trim().toLowerCase();
+    if (s === 'stopdesk' || s === 'stop_desk' || s === 'stop-desk' || s === 'bureau') return 'stopdesk';
+    return 'domicile';
+  }
+
+  async function shipSingleOrderToEcom(orderId: string, mode: EcomMode) {
+    const order = orders.find((o) => o.id === orderId || o.orderCode === orderId);
+    if (!order) {
+      return { http: 404 as const, body: { success: false, error: 'Order not found' } };
+    }
+    if (order.deliveryStatus === 'shipped' && order.deliveryTracking) {
+      return {
+        http: 200 as const,
+        body: { success: true, duplicate: true, order, tracking: order.deliveryTracking, mode: order.deliveryMode || 'domicile' },
+      };
+    }
+    const result = await shipOrderToEcom(
+      {
+        orderCode: order.orderCode,
+        customerName: order.customerName,
+        phone: order.phone,
+        wilaya: order.wilaya,
+        commune: order.commune,
+        packageTitle: order.packageTitle,
+        contentId: order.contentId,
+        totalPrice: Number(order.totalPrice) || 0,
+        notes: order.notes,
+      },
+      mode,
+      { env: process.env as Record<string, string | undefined> }
+    );
+    if (result.ok) {
+      order.deliveryProvider = 'ecom_delivery';
+      order.deliveryMode = mode;
+      order.deliveryStatus = 'shipped';
+      order.deliveryShippedAt = Date.now();
+      if (result.tracking) order.deliveryTracking = result.tracking;
+      order.deliveryError = null;
+    } else {
+      order.deliveryProvider = 'ecom_delivery';
+      order.deliveryMode = mode;
+      order.deliveryStatus = 'failed';
+      order.deliveryError = result.error;
+    }
+    persistOrders();
+    broadcastSse('ORDER_UPDATED', order);
+    if (!result.ok) {
+      return { http: 502 as const, body: { success: false, error: result.error, order } };
+    }
+    return { http: 200 as const, body: { success: true, order, tracking: result.tracking, mode } };
+  }
+
+  // Ecom config probe (booleans only, never secrets) - Protected
+  app.get('/api/ecom/status', checkAdminAuth, (req: Request, res: Response) => {
+    const cfg = getEcomConfig(process.env as Record<string, string | undefined>);
+    return res.json({
+      success: true,
+      configured: isEcomConfigured(process.env as Record<string, string | undefined>),
+      hasToken: Boolean(cfg.token),
+      hasKey: Boolean(cfg.key),
+      baseUrl: cfg.baseUrl,
+      createPath: cfg.createPath,
+    });
+  });
+
+  const handleEcomShip = async (req: Request, res: Response) => {
+    const body = req.body || {};
+    const mode = normalizeEcomMode(body.mode || body.deliveryMode);
+    const ids = Array.isArray(body.orderIds) ? body.orderIds.map(String).filter(Boolean) : null;
+    if (ids) {
+      if (ids.length === 0 || ids.length > 50) {
+        return res.status(400).json({ success: false, error: 'orderIds must contain 1..50 ids.' });
+      }
+      const results: Array<Record<string, unknown>> = [];
+      for (const id of ids) {
+        try {
+          const perMode = body.modes && typeof body.modes === 'object'
+            ? normalizeEcomMode((body.modes as Record<string, unknown>)[id])
+            : mode;
+          const r = await shipSingleOrderToEcom(id, perMode);
+          results.push({ orderId: id, http: r.http, ...(r.body as Record<string, unknown>) });
+        } catch (e) {
+          results.push({ orderId: id, http: 500, success: false, error: (e as Error)?.message || String(e) });
+        }
+      }
+      const shipped = results.filter((r) => r.http === 200 && r.success).length;
+      return res.json({ success: true, shipped, total: results.length, results });
+    }
+    const orderId = String(body.orderId || body.id || '').trim();
+    if (!orderId) {
+      return res.status(400).json({ success: false, error: 'orderId is required.' });
+    }
+    const r = await shipSingleOrderToEcom(orderId, mode);
+    return res.status(r.http).json(r.body);
+  };
+
+  app.post('/api/ecom/ship', checkAdminAuth, handleEcomShip);
+  app.post('/api/ecom/ship-bulk', checkAdminAuth, handleEcomShip);
 
   // PATCH order status or notes - Protected: only admin can modify
   app.patch('/api/orders/:id', checkAdminAuth, (req: Request, res: Response) => {

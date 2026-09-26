@@ -726,6 +726,123 @@ export async function deleteOrder(orderId: string): Promise<boolean> {
 }
 
 /**
+ * Ecom Delivery — manual push of a confirmed order (admin only).
+ * Server holds the API Token/Key; the browser only sends orderId + mode.
+ */
+export type EcomDeliveryMode = 'domicile' | 'stopdesk';
+
+export interface EcomShipResult {
+  success: boolean;
+  duplicate?: boolean;
+  tracking?: string | null;
+  mode?: EcomDeliveryMode;
+  order?: PlacedOrder;
+  error?: string;
+}
+
+function ecomAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const token = getAdminToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
+}
+
+/** Push a single order to Ecom Delivery. Returns the updated order on success. */
+export async function shipToEcom(orderId: string, mode: EcomDeliveryMode = 'domicile'): Promise<EcomShipResult> {
+  try {
+    const res = await fetch('/api/ecom/ship', {
+      method: 'POST',
+      headers: ecomAuthHeaders(),
+      body: JSON.stringify({ orderId, mode }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data && (data.success || data.duplicate)) {
+      const order = data.order as PlacedOrder | undefined;
+      // Reconcile local cache so the dashboard shows tracking instantly.
+      if (order) {
+        try {
+          const existing = getLocalOrders();
+          const idx = existing.findIndex((o) => o.id === order.id || o.orderCode === order.orderCode);
+          if (idx !== -1) {
+            existing[idx] = { ...existing[idx], ...order };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(existing));
+          }
+        } catch {
+          // ignore
+        }
+      }
+      return {
+        success: true,
+        duplicate: Boolean(data.duplicate),
+        tracking: (data.tracking as string | null) ?? order?.deliveryTracking ?? null,
+        mode: (data.mode as EcomDeliveryMode) || mode,
+        order,
+      };
+    }
+    return { success: false, error: (data && (data.error as string)) || `Ecom shipping failed (${res.status})` };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Bulk push (up to 50). Per-order modes override the shared mode. */
+export async function shipBulkToEcom(
+  orderIds: string[],
+  mode: EcomDeliveryMode = 'domicile',
+  modes?: Record<string, EcomDeliveryMode>
+): Promise<{ shipped: number; total: number; results: Array<{ orderId: string; success: boolean; error?: string }> }> {
+  const res = await fetch('/api/ecom/ship-bulk', {
+    method: 'POST',
+    headers: ecomAuthHeaders(),
+    body: JSON.stringify({ orderIds, mode, ...(modes ? { modes } : {}) }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data || data.success === false) {
+    throw new Error((data && data.error) || `Bulk shipping failed (${res.status})`);
+  }
+  const results = (Array.isArray(data.results) ? data.results : []).map((r: any) => ({
+    orderId: String(r.orderId || ''),
+    success: Boolean(r.success && (r.http === 200 || r.http === undefined)),
+    error: typeof r.error === 'string' ? r.error : undefined,
+  }));
+  // Refresh local cache in one pass.
+  try {
+    const refreshed = await getOrders();
+    void refreshed;
+  } catch {
+    // ignore — realtime poller reconciles within 15s
+  }
+  return { shipped: Number(data.shipped) || 0, total: Number(data.total) || orderIds.length, results };
+}
+
+/** Config probe (booleans only). Used for the dashboard setup banner. */
+export async function getEcomStatus(): Promise<{
+  configured: boolean;
+  hasToken: boolean;
+  hasKey: boolean;
+  baseUrl?: string;
+  createPath?: string;
+} | null> {
+  try {
+    const token = getAdminToken();
+    if (!token) return null;
+    const res = await fetch('/api/ecom/status', { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    if (!data || !data.success) return null;
+    return {
+      configured: Boolean(data.configured),
+      hasToken: Boolean(data.hasToken),
+      hasKey: Boolean(data.hasKey),
+      baseUrl: typeof data.baseUrl === 'string' ? data.baseUrl : undefined,
+      createPath: typeof data.createPath === 'string' ? data.createPath : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Real-time subscription hook:
  * 1. Server API incremental polling (?since) is the primary cross-device path.
  * 2. Firestore onSnapshot is best-effort only (rules deny reads → quiet).

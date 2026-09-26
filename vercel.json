@@ -80,6 +80,18 @@
       "destination": "/api/meta-test-event"
     },
     {
+      "source": "/api/ecom/status",
+      "destination": "/api/ecom-ship"
+    },
+    {
+      "source": "/api/ecom/ship",
+      "destination": "/api/ecom-ship"
+    },
+    {
+      "source": "/api/ecom/ship-bulk",
+      "destination": "/api/ecom-ship"
+    },
+    {
       "source": "/api/analytics/:path*",
       "destination": "/api/analytics?path=:path*"
     },
