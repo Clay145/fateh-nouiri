@@ -1253,9 +1253,14 @@ async function startServer() {
   }
 
   async function shipSingleOrderToEcom(orderId: string, mode: EcomMode, snapshot?: any) {
+    // Same ordering as the Vercel path: valid snapshot wins immediately so a
+    // slow store never blocks the push; orderCode stays the idempotency key.
     let order = orders.find((o) => o.id === orderId || o.orderCode === orderId);
     let durable = true;
-    if (!order && snapshot && typeof snapshot.orderCode === 'string' && typeof snapshot.customerName === 'string' && typeof snapshot.phone === 'string') {
+    const snapshotValid = Boolean(
+      snapshot && typeof snapshot.orderCode === 'string' && typeof snapshot.customerName === 'string' && typeof snapshot.phone === 'string'
+    );
+    if (!order && snapshotValid) {
       // Snapshot fallback (mirrors the Vercel path): usable when the local
       // file store has no record. orderCode stays the idempotency key.
       const snapOrder: OrderItem = {

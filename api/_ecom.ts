@@ -229,8 +229,15 @@ export async function shipOrderToEcom(
   const url = `${cfg.baseUrl}/${cfg.createPath.replace(/^\/+/, '')}`;
   const payload = buildEcomPayload(order, mode, cfg.fromWilaya);
   const fetchFn = deps.fetchFn || fetch;
+  // Hobby budget: the whole ship response must fit in ~10s, so the Ecom leg
+  // is capped at 8s (their API normally answers in 1-2s). Override with
+  // ECOM_TIMEOUT_MS when the function budget allows more headroom.
+  const rawTimeout = Number((deps.env || {}).ECOM_TIMEOUT_MS);
+  const timeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0
+    ? Math.min(25000, Math.floor(rawTimeout))
+    : (deps.timeoutMs || 8000);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), deps.timeoutMs || 12000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetchFn(url, {
       method: 'POST',

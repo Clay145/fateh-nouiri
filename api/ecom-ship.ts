@@ -63,15 +63,36 @@ function isValidSnapshot(s: any): boolean {
   );
 }
 
+function buildSnapshotOrder(orderId: string, snapshot: any): any {
+  return {
+    id: typeof snapshot.id === 'string' ? snapshot.id : String(orderId),
+    orderCode: String(snapshot.orderCode).trim(),
+    customerName: String(snapshot.customerName).trim(),
+    phone: String(snapshot.phone).trim(),
+    wilaya: typeof snapshot.wilaya === 'string' ? snapshot.wilaya : 'غير محدد',
+    commune: typeof snapshot.commune === 'string' ? snapshot.commune : '',
+    packageTitle: typeof snapshot.packageTitle === 'string' ? snapshot.packageTitle : 'جهاز مساج Theoria',
+    contentId: typeof snapshot.contentId === 'string' ? snapshot.contentId : undefined,
+    totalPrice: Number(snapshot.totalPrice) || 0,
+    notes: typeof snapshot.notes === 'string' ? snapshot.notes : '',
+    deliveryStatus: typeof snapshot.deliveryStatus === 'string' ? snapshot.deliveryStatus : undefined,
+    deliveryTracking: typeof snapshot.deliveryTracking === 'string' ? snapshot.deliveryTracking : undefined,
+    deliveryMode: typeof snapshot.deliveryMode === 'string' ? snapshot.deliveryMode : undefined,
+  };
+}
+
 async function shipOne(orderId: string, mode: EcomMode, snapshot?: any) {
-  // Resolve order: memory first (fast path), then durable Firestore (now
-  // hard-capped at ~8s in _firestoreAdmin), then the admin-authenticated
-  // client snapshot. The snapshot path keeps manual shipping usable during
-  // a Firestore DNS/egress stall; orderCode stays the idempotency key and
-  // the response flags durable:false so the dashboard knows the mirror is
-  // pending.
+  // Hobby budget: the whole response must fit in ~10s. When the dashboard
+  // supplies a valid snapshot it is used IMMEDIATELY — no Firestore read on
+  // the critical path (a stalled lookup alone can burn 16s). The snapshot
+  // carries deliveryStatus/tracking, so idempotency still holds. The
+  // Firestore lookup remains only for snapshot-less callers.
   let order = findMemoryOrder(orderId);
   let durable = true;
+  if (!order && isValidSnapshot(snapshot)) {
+    order = buildSnapshotOrder(orderId, snapshot);
+    durable = false;
+  }
   if (!order) {
     if (isAdminDbConfigured()) {
       const lookup = await adminGetOrderByCodeStrict(String(orderId));
@@ -83,21 +104,7 @@ async function shipOne(orderId: string, mode: EcomMode, snapshot?: any) {
         }
       } else if (lookup.status === 'unavailable' || lookup.status === 'unconfigured') {
         if (isValidSnapshot(snapshot)) {
-          order = {
-            id: typeof snapshot.id === 'string' ? snapshot.id : String(orderId),
-            orderCode: String(snapshot.orderCode).trim(),
-            customerName: String(snapshot.customerName).trim(),
-            phone: String(snapshot.phone).trim(),
-            wilaya: typeof snapshot.wilaya === 'string' ? snapshot.wilaya : 'غير محدد',
-            commune: typeof snapshot.commune === 'string' ? snapshot.commune : '',
-            packageTitle: typeof snapshot.packageTitle === 'string' ? snapshot.packageTitle : 'جهاز مساج Theoria',
-            contentId: typeof snapshot.contentId === 'string' ? snapshot.contentId : undefined,
-            totalPrice: Number(snapshot.totalPrice) || 0,
-            notes: typeof snapshot.notes === 'string' ? snapshot.notes : '',
-            deliveryStatus: typeof snapshot.deliveryStatus === 'string' ? snapshot.deliveryStatus : undefined,
-            deliveryTracking: typeof snapshot.deliveryTracking === 'string' ? snapshot.deliveryTracking : undefined,
-            deliveryMode: typeof snapshot.deliveryMode === 'string' ? snapshot.deliveryMode : undefined,
-          };
+          order = buildSnapshotOrder(orderId, snapshot);
           durable = false;
         } else {
           return { http: 503 as const, body: { success: false, error: 'Store unreachable — أعد المحاولة (انقطاع مؤقت في قاعدة البيانات).', firestore: getFirestoreDiagnostics() } };
@@ -106,21 +113,7 @@ async function shipOne(orderId: string, mode: EcomMode, snapshot?: any) {
         return { http: 404 as const, body: { success: false, error: 'Order not found' } };
       }
     } else if (isValidSnapshot(snapshot)) {
-      order = {
-        id: typeof snapshot.id === 'string' ? snapshot.id : String(orderId),
-        orderCode: String(snapshot.orderCode).trim(),
-        customerName: String(snapshot.customerName).trim(),
-        phone: String(snapshot.phone).trim(),
-        wilaya: typeof snapshot.wilaya === 'string' ? snapshot.wilaya : 'غير محدد',
-        commune: typeof snapshot.commune === 'string' ? snapshot.commune : '',
-        packageTitle: typeof snapshot.packageTitle === 'string' ? snapshot.packageTitle : 'جهاز مساج Theoria',
-        contentId: typeof snapshot.contentId === 'string' ? snapshot.contentId : undefined,
-        totalPrice: Number(snapshot.totalPrice) || 0,
-        notes: typeof snapshot.notes === 'string' ? snapshot.notes : '',
-        deliveryStatus: typeof snapshot.deliveryStatus === 'string' ? snapshot.deliveryStatus : undefined,
-        deliveryTracking: typeof snapshot.deliveryTracking === 'string' ? snapshot.deliveryTracking : undefined,
-        deliveryMode: typeof snapshot.deliveryMode === 'string' ? snapshot.deliveryMode : undefined,
-      };
+      order = buildSnapshotOrder(orderId, snapshot);
       durable = false;
     }
   }
@@ -172,11 +165,13 @@ async function shipOne(orderId: string, mode: EcomMode, snapshot?: any) {
     patch.deliveryError = result.error;
   }
 
-  // Mirror onto both stores (best-effort durable, authoritative memory here).
+  // Mirror onto both stores WITHOUT awaiting: persistence must never sit on
+  // the response critical path (an 8s patch cap + slow Ecom leg would exceed
+  // the Hobby 10s function budget and produce an empty platform 502).
   // On the snapshot path there may be no durable record yet — the patch is a
   // no-op then, and durable:false tells the dashboard the mirror is pending.
   if (order.id && durable) {
-    adminPatchOrder(String(order.id), patch).catch(() => {});
+    void adminPatchOrder(String(order.id), patch).catch(() => {});
   }
   Object.assign(order, patch);
 
