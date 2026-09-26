@@ -41,6 +41,32 @@ let lastErrorMessage: string | null = null;
 let lastErrorOp: string | null = null;
 let lastNotFoundHintAt = 0;
 const NOT_FOUND_HINT_THROTTLE_MS = 60_000;
+// Hard cap for every Firestore round-trip. The gRPC client retries internally
+// for 60s+ (observed: DEADLINE_EXCEEDED after 101s on DNS stalls), which gets
+// serverless functions killed by the platform (browser sees an empty 502).
+// Capped ops degrade to 'unavailable'/[] instead — clean JSON, never a kill.
+const FIRESTORE_OP_TIMEOUT_MS = (() => {
+  const n = Number(process.env.FIRESTORE_OP_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? Math.min(25000, Math.floor(n)) : 8000;
+})();
+
+/**
+ * Race a Firestore promise against a hard timeout. The loser promise gets a
+ * no-op catch attached so a late rejection never surfaces as unhandled.
+ */
+function withFirestoreTimeout<T>(op: string, promise: Promise<T>, ms = FIRESTORE_OP_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`[FirestoreAdmin] ${op} timed out after ${ms}ms (DNS/egress stall?)`)),
+      ms
+    );
+  });
+  promise.catch(() => {});
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<T>;
+}
 // One-shot reachability probe state (see probeDatabaseReachability below).
 let probeStarted = false;
 let dbProbeStatus: 'unprobed' | 'reachable' | 'not_found' | 'denied' | 'error' = 'unprobed';
@@ -245,7 +271,7 @@ async function probeDatabaseReachability(): Promise<void> {
   if (probeStarted || !db) return;
   probeStarted = true;
   try {
-    const cols = await db.listCollections();
+    const cols = await withFirestoreTimeout('probe', db.listCollections());
     dbProbeStatus = 'reachable';
     dbProbeMessage = `ok (${cols.length} collections) @ ${requestResourcePath()}`;
     console.log(`[FirestoreAdmin] Probe: database reachable — ${dbProbeMessage}`);
@@ -309,12 +335,15 @@ export async function adminGetOrderByCodeStrict(orderCode: string): Promise<Orde
   const adb = getAdminDb();
   if (!adb || !orderCode) return adb ? { status: 'missing' } : { status: 'unconfigured' };
   try {
-    const byCode = await adb.collection('orders').where('orderCode', '==', orderCode).limit(1).get();
+    const byCode = await withFirestoreTimeout(
+      'getOrder',
+      adb.collection('orders').where('orderCode', '==', orderCode).limit(1).get()
+    );
     if (!byCode.empty) {
       const doc = byCode.docs[0];
       return { status: 'found', order: { ...doc.data(), id: doc.id } };
     }
-    const byId = await adb.collection('orders').doc(orderCode).get();
+    const byId = await withFirestoreTimeout('getOrder', adb.collection('orders').doc(orderCode).get());
     if (byId.exists) return { status: 'found', order: { ...byId.data(), id: byId.id } };
     return { status: 'missing' };
   } catch (err) {
@@ -328,7 +357,10 @@ export async function adminSetFbSent(orderCode: string): Promise<boolean> {
   const adb = getAdminDb();
   if (!adb || !orderCode) return false;
   try {
-    const byCode = await adb.collection('orders').where('orderCode', '==', orderCode).limit(1).get();
+    const byCode = await withFirestoreTimeout(
+      'setFbSent',
+      adb.collection('orders').where('orderCode', '==', orderCode).limit(1).get()
+    );
     const target = byCode.empty ? adb.collection('orders').doc(orderCode) : byCode.docs[0].ref;
     await target.set({ fb_sent: 1, fb_sent_at: Date.now() }, { merge: true });
     return true;
@@ -343,7 +375,7 @@ export async function adminPatchOrder(docId: string, patch: Record<string, unkno
   const adb = getAdminDb();
   if (!adb || !docId) return false;
   try {
-    await adb.collection('orders').doc(docId).set(patch, { merge: true });
+    await withFirestoreTimeout('patchOrder', adb.collection('orders').doc(docId).set(patch, { merge: true }));
     return true;
   } catch (err) {
     recordError('patchOrder', err);
@@ -372,7 +404,7 @@ export async function adminCreateOrder(order: Record<string, unknown>): Promise<
   const docId = order.id || order.orderCode;
   if (!docId) return false;
   try {
-    await adb.collection('orders').doc(String(docId)).set(order, { merge: true });
+    await withFirestoreTimeout('createOrder', adb.collection('orders').doc(String(docId)).set(order, { merge: true }));
     return true;
   } catch (err) {
     recordError('createOrder', err);
@@ -382,7 +414,10 @@ export async function adminCreateOrder(order: Record<string, unknown>): Promise<
 
 /** Raw recent-orders query against the already-opened canonical DB (no error logging here). */
 async function queryRecentOrders(adb: Firestore, limit: number): Promise<any[]> {
-  const snap = await adb.collection('orders').orderBy('createdAt', 'desc').limit(limit).get();
+  const snap = await withFirestoreTimeout(
+    'listOrders',
+    adb.collection('orders').orderBy('createdAt', 'desc').limit(limit).get()
+  );
   return snap.docs.map((d) => ({ ...d.data(), id: d.id }));
 }
 
@@ -409,7 +444,10 @@ export async function adminListOrdersByPhone(phone: string, limit = 20): Promise
   try {
     const seen = new Map<string, any>();
     for (const v of variants.slice(0, 3)) {
-      const snap = await adb.collection('orders').where('phone', '==', v).limit(limit).get();
+      const snap = await withFirestoreTimeout(
+        'listOrdersByPhone',
+        adb.collection('orders').where('phone', '==', v).limit(limit).get()
+      );
       snap.docs.forEach((d) => {
         if (!seen.has(d.id)) seen.set(d.id, { ...d.data(), id: d.id });
       });
@@ -432,7 +470,7 @@ export async function adminListOrdersSince(since = 0, limit = 100): Promise<any[
       // createdAt is stored as epoch ms number on all new orders.
       q = q.where('createdAt', '>', since);
     }
-    const snap = await q.limit(limit).get();
+    const snap = await withFirestoreTimeout('listOrdersSince', q.limit(limit).get());
     return snap.docs.map((d) => ({ ...d.data(), id: d.id }));
   } catch (err) {
     if (isNotFoundError(err)) {

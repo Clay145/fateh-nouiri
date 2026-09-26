@@ -738,6 +738,8 @@ export interface EcomShipResult {
   mode?: EcomDeliveryMode;
   order?: PlacedOrder;
   error?: string;
+  /** False when shipped via the client-snapshot fallback (store unreachable). */
+  durable?: boolean;
 }
 
 function ecomAuthHeaders(): Record<string, string> {
@@ -749,11 +751,24 @@ function ecomAuthHeaders(): Record<string, string> {
 
 /** Push a single order to Ecom Delivery. Returns the updated order on success. */
 export async function shipToEcom(orderId: string, mode: EcomDeliveryMode = 'domicile'): Promise<EcomShipResult> {
+  // Attach the dashboard's local order snapshot: if the server's durable
+  // store stalls (Firestore DNS/egress hang), the admin-authenticated
+  // snapshot lets the push still succeed; orderCode stays idempotent.
+  let orderSnapshot: Record<string, unknown> | undefined;
+  try {
+    const cached = getLocalOrders().find((o) => o.id === orderId || o.orderCode === orderId);
+    if (cached) {
+      const { id, orderCode, customerName, phone, wilaya, commune, packageTitle, contentId, totalPrice, notes, deliveryStatus, deliveryTracking, deliveryMode } = cached;
+      orderSnapshot = { id, orderCode, customerName, phone, wilaya, commune, packageTitle, contentId, totalPrice, notes, deliveryStatus, deliveryTracking, deliveryMode };
+    }
+  } catch {
+    // ignore — server resolves by id alone
+  }
   try {
     const res = await fetch('/api/ecom/ship', {
       method: 'POST',
       headers: ecomAuthHeaders(),
-      body: JSON.stringify({ orderId, mode }),
+      body: JSON.stringify({ orderId, mode, ...(orderSnapshot ? { orderSnapshot } : {}) }),
     });
     const data = await res.json().catch(() => null);
     if (res.ok && data && (data.success || data.duplicate)) {
@@ -777,6 +792,7 @@ export async function shipToEcom(orderId: string, mode: EcomDeliveryMode = 'domi
         tracking: (data.tracking as string | null) ?? order?.deliveryTracking ?? null,
         mode: (data.mode as EcomDeliveryMode) || mode,
         order,
+        durable: data.durable === false ? false : true,
       };
     }
     return { success: false, error: (data && (data.error as string)) || `Ecom shipping failed (${res.status})` };
@@ -791,10 +807,23 @@ export async function shipBulkToEcom(
   mode: EcomDeliveryMode = 'domicile',
   modes?: Record<string, EcomDeliveryMode>
 ): Promise<{ shipped: number; total: number; results: Array<{ orderId: string; success: boolean; error?: string }> }> {
+  const orderSnapshots: Record<string, Record<string, unknown>> = {};
+  try {
+    const cached = getLocalOrders();
+    for (const id of orderIds) {
+      const o = cached.find((c) => c.id === id || c.orderCode === id);
+      if (o) {
+        const { id: oid, orderCode, customerName, phone, wilaya, commune, packageTitle, contentId, totalPrice, notes, deliveryStatus, deliveryTracking, deliveryMode } = o;
+        orderSnapshots[id] = { id: oid, orderCode, customerName, phone, wilaya, commune, packageTitle, contentId, totalPrice, notes, deliveryStatus, deliveryTracking, deliveryMode };
+      }
+    }
+  } catch {
+    // ignore — server resolves by ids alone
+  }
   const res = await fetch('/api/ecom/ship-bulk', {
     method: 'POST',
     headers: ecomAuthHeaders(),
-    body: JSON.stringify({ orderIds, mode, ...(modes ? { modes } : {}) }),
+    body: JSON.stringify({ orderIds, mode, ...(modes ? { modes } : {}), ...(Object.keys(orderSnapshots).length ? { orderSnapshots } : {}) }),
   });
   const data = await res.json().catch(() => null);
   if (!res.ok || !data || data.success === false) {

@@ -1252,8 +1252,30 @@ async function startServer() {
     return 'domicile';
   }
 
-  async function shipSingleOrderToEcom(orderId: string, mode: EcomMode) {
-    const order = orders.find((o) => o.id === orderId || o.orderCode === orderId);
+  async function shipSingleOrderToEcom(orderId: string, mode: EcomMode, snapshot?: any) {
+    let order = orders.find((o) => o.id === orderId || o.orderCode === orderId);
+    let durable = true;
+    if (!order && snapshot && typeof snapshot.orderCode === 'string' && typeof snapshot.customerName === 'string' && typeof snapshot.phone === 'string') {
+      // Snapshot fallback (mirrors the Vercel path): usable when the local
+      // file store has no record. orderCode stays the idempotency key.
+      const snapOrder: OrderItem = {
+        id: typeof snapshot.id === 'string' ? snapshot.id : String(orderId),
+        orderCode: String(snapshot.orderCode).trim(),
+        customerName: String(snapshot.customerName).trim(),
+        phone: String(snapshot.phone).trim(),
+        wilaya: typeof snapshot.wilaya === 'string' ? snapshot.wilaya : 'غير محدد',
+        commune: typeof snapshot.commune === 'string' ? snapshot.commune : '',
+        packageTitle: typeof snapshot.packageTitle === 'string' ? snapshot.packageTitle : 'جهاز مساج Theoria',
+        totalPrice: Number(snapshot.totalPrice) || 0,
+        date: new Date().toLocaleDateString('ar-DZ', { year: 'numeric', month: 'long', day: 'numeric' }),
+        createdAt: Date.now(),
+        status: 'جديد',
+        notes: typeof snapshot.notes === 'string' ? snapshot.notes : '',
+      };
+      orders.unshift(snapOrder);
+      order = snapOrder;
+      durable = false;
+    }
     if (!order) {
       return { http: 404 as const, body: { success: false, error: 'Order not found' } };
     }
@@ -1294,9 +1316,9 @@ async function startServer() {
     persistOrders();
     broadcastSse('ORDER_UPDATED', order);
     if (!result.ok) {
-      return { http: 502 as const, body: { success: false, error: result.error, order } };
+      return { http: 502 as const, body: { success: false, error: result.error, order, durable } };
     }
-    return { http: 200 as const, body: { success: true, order, tracking: result.tracking, mode } };
+    return { http: 200 as const, body: { success: true, order, tracking: result.tracking, mode, durable } };
   }
 
   // Ecom config probe (booleans only, never secrets) - Protected
@@ -1326,7 +1348,8 @@ async function startServer() {
           const perMode = body.modes && typeof body.modes === 'object'
             ? normalizeEcomMode((body.modes as Record<string, unknown>)[id])
             : mode;
-          const r = await shipSingleOrderToEcom(id, perMode);
+          const snapshots = (body.orderSnapshots && typeof body.orderSnapshots === 'object' ? body.orderSnapshots : {}) as Record<string, unknown>;
+          const r = await shipSingleOrderToEcom(id, perMode, snapshots[id]);
           results.push({ orderId: id, http: r.http, ...(r.body as Record<string, unknown>) });
         } catch (e) {
           results.push({ orderId: id, http: 500, success: false, error: (e as Error)?.message || String(e) });
@@ -1339,7 +1362,7 @@ async function startServer() {
     if (!orderId) {
       return res.status(400).json({ success: false, error: 'orderId is required.' });
     }
-    const r = await shipSingleOrderToEcom(orderId, mode);
+    const r = await shipSingleOrderToEcom(orderId, mode, body.orderSnapshot);
     return res.status(r.http).json(r.body);
   };
 

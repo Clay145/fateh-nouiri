@@ -241,6 +241,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
     });
     if (result.success && result.order) {
       setOrders((prev) => prev.map((o) => (o.id === key ? { ...o, ...result.order } : o)));
+      if (result.durable === false) {
+        flashActionError('تم الإرسال إلى Ecom لكن تعذر الحفظ في قاعدة البيانات (انقطاع مؤقت) — تحقق من الطرد في لوحة Ecom، وسيُزامَن لاحقاً.');
+      }
     } else {
       // Surface server error on the row so a retry keeps the same mode.
       setOrders((prev) =>

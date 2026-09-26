@@ -50,21 +50,78 @@ function findMemoryOrder(key: string): any | null {
   return list.find((o) => o && (o.id === key || o.orderCode === key)) || null;
 }
 
-async function shipOne(orderId: string, mode: EcomMode) {
-  // Resolve order: memory first (fast path), then durable Firestore.
+function isValidSnapshot(s: any): boolean {
+  return Boolean(
+    s &&
+    typeof s === 'object' &&
+    typeof s.orderCode === 'string' &&
+    s.orderCode.trim() &&
+    typeof s.customerName === 'string' &&
+    s.customerName.trim() &&
+    typeof s.phone === 'string' &&
+    s.phone.trim()
+  );
+}
+
+async function shipOne(orderId: string, mode: EcomMode, snapshot?: any) {
+  // Resolve order: memory first (fast path), then durable Firestore (now
+  // hard-capped at ~8s in _firestoreAdmin), then the admin-authenticated
+  // client snapshot. The snapshot path keeps manual shipping usable during
+  // a Firestore DNS/egress stall; orderCode stays the idempotency key and
+  // the response flags durable:false so the dashboard knows the mirror is
+  // pending.
   let order = findMemoryOrder(orderId);
-  if (!order && isAdminDbConfigured()) {
-    const lookup = await adminGetOrderByCodeStrict(String(orderId));
-    if (lookup.status === 'found') {
-      order = lookup.order;
-      if (!global.__THEORIA_ORDERS__) global.__THEORIA_ORDERS__ = [];
-      if (!global.__THEORIA_ORDERS__.some((o) => o.id === order.id || o.orderCode === order.orderCode)) {
-        global.__THEORIA_ORDERS__.unshift(order);
+  let durable = true;
+  if (!order) {
+    if (isAdminDbConfigured()) {
+      const lookup = await adminGetOrderByCodeStrict(String(orderId));
+      if (lookup.status === 'found') {
+        order = lookup.order;
+        if (!global.__THEORIA_ORDERS__) global.__THEORIA_ORDERS__ = [];
+        if (!global.__THEORIA_ORDERS__.some((o) => o.id === order.id || o.orderCode === order.orderCode)) {
+          global.__THEORIA_ORDERS__.unshift(order);
+        }
+      } else if (lookup.status === 'unavailable' || lookup.status === 'unconfigured') {
+        if (isValidSnapshot(snapshot)) {
+          order = {
+            id: typeof snapshot.id === 'string' ? snapshot.id : String(orderId),
+            orderCode: String(snapshot.orderCode).trim(),
+            customerName: String(snapshot.customerName).trim(),
+            phone: String(snapshot.phone).trim(),
+            wilaya: typeof snapshot.wilaya === 'string' ? snapshot.wilaya : 'غير محدد',
+            commune: typeof snapshot.commune === 'string' ? snapshot.commune : '',
+            packageTitle: typeof snapshot.packageTitle === 'string' ? snapshot.packageTitle : 'جهاز مساج Theoria',
+            contentId: typeof snapshot.contentId === 'string' ? snapshot.contentId : undefined,
+            totalPrice: Number(snapshot.totalPrice) || 0,
+            notes: typeof snapshot.notes === 'string' ? snapshot.notes : '',
+            deliveryStatus: typeof snapshot.deliveryStatus === 'string' ? snapshot.deliveryStatus : undefined,
+            deliveryTracking: typeof snapshot.deliveryTracking === 'string' ? snapshot.deliveryTracking : undefined,
+            deliveryMode: typeof snapshot.deliveryMode === 'string' ? snapshot.deliveryMode : undefined,
+          };
+          durable = false;
+        } else {
+          return { http: 503 as const, body: { success: false, error: 'Store unreachable — أعد المحاولة (انقطاع مؤقت في قاعدة البيانات).', firestore: getFirestoreDiagnostics() } };
+        }
+      } else {
+        return { http: 404 as const, body: { success: false, error: 'Order not found' } };
       }
-    } else if (lookup.status === 'unavailable' || lookup.status === 'unconfigured') {
-      return { http: 503 as const, body: { success: false, error: 'Store unreachable.', firestore: getFirestoreDiagnostics() } };
-    } else {
-      return { http: 404 as const, body: { success: false, error: 'Order not found' } };
+    } else if (isValidSnapshot(snapshot)) {
+      order = {
+        id: typeof snapshot.id === 'string' ? snapshot.id : String(orderId),
+        orderCode: String(snapshot.orderCode).trim(),
+        customerName: String(snapshot.customerName).trim(),
+        phone: String(snapshot.phone).trim(),
+        wilaya: typeof snapshot.wilaya === 'string' ? snapshot.wilaya : 'غير محدد',
+        commune: typeof snapshot.commune === 'string' ? snapshot.commune : '',
+        packageTitle: typeof snapshot.packageTitle === 'string' ? snapshot.packageTitle : 'جهاز مساج Theoria',
+        contentId: typeof snapshot.contentId === 'string' ? snapshot.contentId : undefined,
+        totalPrice: Number(snapshot.totalPrice) || 0,
+        notes: typeof snapshot.notes === 'string' ? snapshot.notes : '',
+        deliveryStatus: typeof snapshot.deliveryStatus === 'string' ? snapshot.deliveryStatus : undefined,
+        deliveryTracking: typeof snapshot.deliveryTracking === 'string' ? snapshot.deliveryTracking : undefined,
+        deliveryMode: typeof snapshot.deliveryMode === 'string' ? snapshot.deliveryMode : undefined,
+      };
+      durable = false;
     }
   }
   if (!order) {
@@ -116,15 +173,17 @@ async function shipOne(orderId: string, mode: EcomMode) {
   }
 
   // Mirror onto both stores (best-effort durable, authoritative memory here).
-  if (order.id) {
+  // On the snapshot path there may be no durable record yet — the patch is a
+  // no-op then, and durable:false tells the dashboard the mirror is pending.
+  if (order.id && durable) {
     adminPatchOrder(String(order.id), patch).catch(() => {});
   }
   Object.assign(order, patch);
 
   if (!result.ok) {
-    return { http: 502 as const, body: { success: false, error: result.error, order } };
+    return { http: 502 as const, body: { success: false, error: result.error, order, durable } };
   }
-  return { http: 200 as const, body: { success: true, order, tracking: result.tracking, mode } };
+  return { http: 200 as const, body: { success: true, order, tracking: result.tracking, mode, durable } };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -152,16 +211,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const body = req.body || {};
     const mode = normalizeMode(body.mode || body.deliveryMode);
 
-    // Bulk: { orderIds: [...] }
+    // Bulk: { orderIds: [...], orderSnapshots?: { [id]: order } }
     const ids = Array.isArray(body.orderIds) ? body.orderIds.map(String).filter(Boolean) : null;
     if (ids) {
       if (ids.length === 0 || ids.length > 50) {
         return res.status(400).json({ success: false, error: 'orderIds must contain 1..50 ids.' });
       }
+      const snapshots = (body.orderSnapshots && typeof body.orderSnapshots === 'object' ? body.orderSnapshots : {}) as Record<string, unknown>;
       const results: Array<Record<string, unknown>> = [];
       for (const id of ids) {
         try {
-          const r = await shipOne(id, Array.isArray(body.modes) ? normalizeMode((body.modes as Record<string, unknown>)[id]) : mode);
+          const r = await shipOne(
+            id,
+            Array.isArray(body.modes) ? normalizeMode((body.modes as Record<string, unknown>)[id]) : mode,
+            snapshots[id]
+          );
           results.push({ orderId: id, http: r.http, ...(r.body as Record<string, unknown>) });
         } catch (e) {
           results.push({ orderId: id, http: 500, success: false, error: (e as Error)?.message || String(e) });
@@ -171,12 +235,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ success: true, shipped, total: results.length, results });
     }
 
-    // Single: { orderId }
+    // Single: { orderId, orderSnapshot? }
     const orderId = String(body.orderId || body.id || req.query.id || '').trim();
     if (!orderId) {
       return res.status(400).json({ success: false, error: 'orderId is required.' });
     }
-    const r = await shipOne(orderId, mode);
+    const r = await shipOne(orderId, mode, body.orderSnapshot);
     return res.status(r.http).json(r.body);
   }
 
