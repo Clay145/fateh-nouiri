@@ -750,7 +750,11 @@ function ecomAuthHeaders(): Record<string, string> {
 }
 
 /** Push a single order to Ecom Delivery. Returns the updated order on success. */
-export async function shipToEcom(orderId: string, mode: EcomDeliveryMode = 'domicile'): Promise<EcomShipResult> {
+export async function shipToEcom(
+  orderId: string,
+  mode: EcomDeliveryMode = 'domicile',
+  opts: { codeStopdesk?: string } = {}
+): Promise<EcomShipResult> {
   // Attach the dashboard's local order snapshot: if the server's durable
   // store stalls (Firestore DNS/egress hang), the admin-authenticated
   // snapshot lets the push still succeed; orderCode stays idempotent.
@@ -768,7 +772,12 @@ export async function shipToEcom(orderId: string, mode: EcomDeliveryMode = 'domi
     const res = await fetch('/api/ecom/ship', {
       method: 'POST',
       headers: ecomAuthHeaders(),
-      body: JSON.stringify({ orderId, mode, ...(orderSnapshot ? { orderSnapshot } : {}) }),
+      body: JSON.stringify({
+        orderId,
+        mode,
+        ...(orderSnapshot ? { orderSnapshot } : {}),
+        ...(opts.codeStopdesk && opts.codeStopdesk.trim() ? { codeStopdesk: opts.codeStopdesk.trim() } : {}),
+      }),
     });
     const data = await res.json().catch(() => null);
     if (res.ok && data && (data.success || data.duplicate)) {
@@ -801,11 +810,12 @@ export async function shipToEcom(orderId: string, mode: EcomDeliveryMode = 'domi
   }
 }
 
-/** Bulk push (up to 50). Per-order modes override the shared mode. */
+/** Bulk push (up to 50). Per-order modes/codes override the shared ones. */
 export async function shipBulkToEcom(
   orderIds: string[],
   mode: EcomDeliveryMode = 'domicile',
-  modes?: Record<string, EcomDeliveryMode>
+  modes?: Record<string, EcomDeliveryMode>,
+  codeStopdesks?: Record<string, string>
 ): Promise<{ shipped: number; total: number; results: Array<{ orderId: string; success: boolean; error?: string }> }> {
   const orderSnapshots: Record<string, Record<string, unknown>> = {};
   try {
@@ -823,7 +833,13 @@ export async function shipBulkToEcom(
   const res = await fetch('/api/ecom/ship-bulk', {
     method: 'POST',
     headers: ecomAuthHeaders(),
-    body: JSON.stringify({ orderIds, mode, ...(modes ? { modes } : {}), ...(Object.keys(orderSnapshots).length ? { orderSnapshots } : {}) }),
+    body: JSON.stringify({
+      orderIds,
+      mode,
+      ...(modes ? { modes } : {}),
+      ...(codeStopdesks ? { codeStopdesks } : {}),
+      ...(Object.keys(orderSnapshots).length ? { orderSnapshots } : {}),
+    }),
   });
   const data = await res.json().catch(() => null);
   if (!res.ok || !data || data.success === false) {
@@ -868,6 +884,49 @@ export async function getEcomStatus(): Promise<{
     };
   } catch {
     return null;
+  }
+}
+
+/** Ecom directories (communes / stopdesks per wilaya). Cached per wilaya. */
+export interface EcomCommune {
+  id: number;
+  id_wilaya: number;
+  commune: string;
+  code_postal?: number | null;
+  livrable?: boolean;
+}
+
+export interface EcomStopdesk {
+  id: number;
+  id_wilaya: number;
+  nom_bureau: string;
+  code_stopdesk: string;
+  adresse?: string;
+  commune?: string;
+}
+
+const ecomDirCache = new Map<string, Array<EcomCommune | EcomStopdesk>>();
+
+export async function getEcomDirectory(
+  resource: 'communes' | 'stopdesks',
+  wilayaCode: string
+): Promise<Array<EcomCommune | EcomStopdesk>> {
+  const cacheKey = `${resource}:${wilayaCode}`;
+  const cached = ecomDirCache.get(cacheKey);
+  if (cached) return cached;
+  try {
+    const token = getAdminToken();
+    if (!token) return [];
+    const res = await fetch(`/api/ecom/${resource}?id_wilaya=${encodeURIComponent(wilayaCode)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => null);
+    const items = data && Array.isArray(data.items) ? data.items : [];
+    ecomDirCache.set(cacheKey, items);
+    return items;
+  } catch {
+    return [];
   }
 }
 

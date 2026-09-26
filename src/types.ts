@@ -54,6 +54,7 @@ export interface PlacedOrder {
   deliveryTracking?: string;
   deliveryStatus?: 'none' | 'shipped' | 'failed';
   deliveryMode?: 'domicile' | 'stopdesk';
+  deliveryCodeStopdesk?: string;
   deliveryShippedAt?: number;
   deliveryError?: string | null;
   // Zero-loss sync metadata (client outbox + server durable confirmation)

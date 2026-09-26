@@ -14,7 +14,9 @@ import {
   shipToEcom,
   shipBulkToEcom,
   getEcomStatus,
+  getEcomDirectory,
   EcomDeliveryMode,
+  EcomStopdesk,
 } from '../services/orderService';
 import {
   ShieldAlert,
@@ -97,8 +99,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
   // Ecom Delivery manual push state
   const [ecomConfigured, setEcomConfigured] = useState<boolean | null>(null);
   const [shipModes, setShipModes] = useState<Record<string, EcomDeliveryMode>>({});
+  const [shipCodes, setShipCodes] = useState<Record<string, string>>({});
+  const [stopdeskOptions, setStopdeskOptions] = useState<Record<string, EcomStopdesk[]>>({});
   const [shippingIds, setShippingIds] = useState<Record<string, boolean>>({});
   const [isBulkShipping, setIsBulkShipping] = useState(false);
+
+  const wilayaCodeOf = (wilaya: string): string => {
+    const m = String(wilaya || '').match(/(\d{1,2})/);
+    return m ? String(Number(m[1])) : '';
+  };
+
+  const ensureStopdesks = async (wilayaCode: string) => {
+    if (!wilayaCode || stopdeskOptions[wilayaCode]) return;
+    const items = await getEcomDirectory('stopdesks', wilayaCode);
+    setStopdeskOptions((prev) => ({ ...prev, [wilayaCode]: items as EcomStopdesk[] }));
+  };
 
   // Transient action error (server write failed after optimistic update).
   const [actionError, setActionError] = useState<string | null>(null);
@@ -231,9 +246,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
   const handleShipToEcom = async (order: PlacedOrder) => {
     const key = order.id;
     if (shippingIds[key]) return;
-    setShippingIds((prev) => ({ ...prev, [key]: true }));
     const mode = getShipMode(order);
-    const result = await shipToEcom(order.id, mode);
+    const code = (shipCodes[key] || order.deliveryCodeStopdesk || '').trim();
+    if (mode === 'stopdesk' && !code) {
+      flashActionError('وضع Stopdesk يتطلب اختيار مكتب (code_stopdesk) — اختر من القائمة.');
+      void ensureStopdesks(wilayaCodeOf(order.wilaya));
+      return;
+    }
+    setShippingIds((prev) => ({ ...prev, [key]: true }));
+    const result = await shipToEcom(order.id, mode, code ? { codeStopdesk: code } : {});
     setShippingIds((prev) => {
       const next = { ...prev };
       delete next[key];
@@ -265,10 +286,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
     setIsBulkShipping(true);
     try {
       const modes: Record<string, EcomDeliveryMode> = {};
-      targets.forEach((o) => {
-        modes[o.id] = getShipMode(o);
-      });
-      const { results } = await shipBulkToEcom(targets.map((o) => o.id), 'domicile', modes);
+      const codes: Record<string, string> = {};
+      for (const o of targets) {
+        const m = getShipMode(o);
+        modes[o.id] = m;
+        const c = (shipCodes[o.id] || o.deliveryCodeStopdesk || '').trim();
+        if (m === 'stopdesk') {
+          if (!c) {
+            flashActionError(`طلب ${o.orderCode} بوضع Stopdesk بدون مكتب — تم تخطيه. اختر المكتب أولاً.`);
+            continue;
+          }
+          codes[o.id] = c;
+        }
+      }
+      const sendIds = targets.filter((o) => getShipMode(o) !== 'stopdesk' || codes[o.id]);
+      if (sendIds.length === 0) {
+        setIsBulkShipping(false);
+        return;
+      }
+      const { results } = await shipBulkToEcom(sendIds.map((o) => o.id), 'domicile', modes, codes);
       const data = await getOrders();
       setOrders(data);
       const failed = results.filter((r) => !r.success);
@@ -1008,7 +1044,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
                               {(['domicile', 'stopdesk'] as EcomDeliveryMode[]).map((m) => (
                                 <button
                                   key={m}
-                                  onClick={() => setShipModes((prev) => ({ ...prev, [order.id]: m }))}
+                                  onClick={() => {
+                                    setShipModes((prev) => ({ ...prev, [order.id]: m }));
+                                    if (m === 'stopdesk') void ensureStopdesks(wilayaCodeOf(order.wilaya));
+                                  }}
                                   disabled={order.deliveryStatus === 'shipped'}
                                   className={`flex-1 px-2 py-1 rounded-md transition ${
                                     getShipMode(order) === m
@@ -1020,6 +1059,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
                                 </button>
                               ))}
                             </div>
+                            {getShipMode(order) === 'stopdesk' && order.deliveryStatus !== 'shipped' && (
+                              <div>
+                                <input
+                                  list={`stopdesks-${order.id}`}
+                                  value={shipCodes[order.id] ?? order.deliveryCodeStopdesk ?? ''}
+                                  onChange={(e) => setShipCodes((p) => ({ ...p, [order.id]: e.target.value }))}
+                                  onFocus={() => void ensureStopdesks(wilayaCodeOf(order.wilaya))}
+                                  placeholder="code bureau (ex. 16B)"
+                                  dir="ltr"
+                                  className="w-full px-2 py-1 bg-[#090d16] border border-slate-700 rounded-lg text-[11px] font-mono text-white placeholder:text-slate-500 focus:outline-none focus:border-orange-500"
+                                />
+                                <datalist id={`stopdesks-${order.id}`}>
+                                  {(stopdeskOptions[wilayaCodeOf(order.wilaya)] || []).map((s) => (
+                                    <option key={s.code_stopdesk} value={s.code_stopdesk}>
+                                      {s.nom_bureau} — {s.commune || ''}
+                                    </option>
+                                  ))}
+                                </datalist>
+                              </div>
+                            )}
                             {order.deliveryStatus === 'shipped' && order.deliveryTracking ? (
                               <div className="text-[11px] font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-2 py-1 text-center" dir="ltr">
                                 {order.deliveryTracking}

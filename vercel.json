@@ -92,6 +92,18 @@
       "destination": "/api/ecom-ship"
     },
     {
+      "source": "/api/ecom/communes",
+      "destination": "/api/ecom-ship?resource=communes"
+    },
+    {
+      "source": "/api/ecom/stopdesks",
+      "destination": "/api/ecom-ship?resource=stopdesks"
+    },
+    {
+      "source": "/api/ecom/wilayas",
+      "destination": "/api/ecom-ship?resource=wilayas"
+    },
+    {
       "source": "/api/analytics/:path*",
       "destination": "/api/analytics?path=:path*"
     },

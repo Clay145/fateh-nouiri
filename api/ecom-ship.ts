@@ -8,6 +8,7 @@ import {
 } from './_firestoreAdmin.js';
 import {
   EcomMode,
+  fetchEcomDirectory,
   getEcomConfig,
   isEcomConfigured,
   shipOrderToEcom,
@@ -81,7 +82,7 @@ function buildSnapshotOrder(orderId: string, snapshot: any): any {
   };
 }
 
-async function shipOne(orderId: string, mode: EcomMode, snapshot?: any) {
+async function shipOne(orderId: string, mode: EcomMode, snapshot?: any, codeStopdesk?: string) {
   // Hobby budget: the whole response must fit in ~10s. When the dashboard
   // supplies a valid snapshot it is used IMMEDIATELY — no Firestore read on
   // the critical path (a stalled lookup alone can burn 16s). The snapshot
@@ -135,6 +136,9 @@ async function shipOne(orderId: string, mode: EcomMode, snapshot?: any) {
     };
   }
 
+  const code = typeof codeStopdesk === 'string' && codeStopdesk.trim()
+    ? codeStopdesk.trim()
+    : (typeof order.codeStopdesk === 'string' ? order.codeStopdesk : undefined);
   const result = await shipOrderToEcom(
     {
       orderCode: order.orderCode,
@@ -146,6 +150,7 @@ async function shipOne(orderId: string, mode: EcomMode, snapshot?: any) {
       contentId: order.contentId,
       totalPrice: Number(order.totalPrice) || 0,
       notes: order.notes,
+      ...(code ? { codeStopdesk: code } : {}),
     },
     mode,
     { env: process.env as Record<string, string | undefined> }
@@ -155,6 +160,7 @@ async function shipOne(orderId: string, mode: EcomMode, snapshot?: any) {
     deliveryProvider: 'ecom_delivery',
     deliveryMode: mode,
   };
+  if (code) patch.deliveryCodeStopdesk = code;
   if (result.ok) {
     patch.deliveryStatus = 'shipped';
     patch.deliveryShippedAt = Date.now();
@@ -189,7 +195,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!requireAdmin(req, res)) return res;
 
   // GET /api/ecom/status — config probe (booleans only, never secrets).
+  // GET /api/ecom/communes?id_wilaya=16 | /api/ecom/stopdesks?id_wilaya=16 |
+  //     /api/ecom/wilayas — directory passthrough (same admin auth).
   if (req.method === 'GET') {
+    const first = (v: string | string[] | undefined): string => (Array.isArray(v) ? v[0] || '' : v || '');
+    const resource = first(req.query.resource).trim();
+    if (resource === 'communes' || resource === 'stopdesks' || resource === 'wilayas') {
+      const idWilaya = first(req.query.id_wilaya || req.query.wilaya).trim();
+      const query: Record<string, string> = {};
+      if ((resource === 'communes' || resource === 'stopdesks') && idWilaya) query.id_wilaya = idWilaya;
+      const dir = await fetchEcomDirectory(resource, query, { env: process.env as Record<string, string | undefined> });
+      if (!dir.ok) {
+        return res.status(dir.status || 502).json({ success: false, error: dir.error, items: [] });
+      }
+      return res.status(200).json({ success: true, items: dir.items });
+    }
     const cfg = getEcomConfig(process.env as Record<string, string | undefined>);
     return res.status(200).json({
       success: true,
@@ -205,21 +225,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
     const body = req.body || {};
     const mode = normalizeMode(body.mode || body.deliveryMode);
+    const strOrUndef = (v: unknown): string | undefined =>
+      typeof v === 'string' && v.trim() ? v.trim() : undefined;
 
-    // Bulk: { orderIds: [...], orderSnapshots?: { [id]: order } }
+    // Bulk: { orderIds: [...], orderSnapshots?: {...}, codeStopdesks?: {...} }
     const ids = Array.isArray(body.orderIds) ? body.orderIds.map(String).filter(Boolean) : null;
     if (ids) {
       if (ids.length === 0 || ids.length > 50) {
         return res.status(400).json({ success: false, error: 'orderIds must contain 1..50 ids.' });
       }
       const snapshots = (body.orderSnapshots && typeof body.orderSnapshots === 'object' ? body.orderSnapshots : {}) as Record<string, unknown>;
+      const codes = (body.codeStopdesks && typeof body.codeStopdesks === 'object' ? body.codeStopdesks : {}) as Record<string, unknown>;
       const results: Array<Record<string, unknown>> = [];
       for (const id of ids) {
         try {
           const r = await shipOne(
             id,
             Array.isArray(body.modes) ? normalizeMode((body.modes as Record<string, unknown>)[id]) : mode,
-            snapshots[id]
+            snapshots[id],
+            strOrUndef(codes[id]) || strOrUndef(body.codeStopdesk)
           );
           results.push({ orderId: id, http: r.http, ...(r.body as Record<string, unknown>) });
         } catch (e) {
@@ -230,12 +254,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ success: true, shipped, total: results.length, results });
     }
 
-    // Single: { orderId, orderSnapshot? }
+    // Single: { orderId, orderSnapshot?, codeStopdesk? }
     const orderId = String(body.orderId || body.id || req.query.id || '').trim();
     if (!orderId) {
       return res.status(400).json({ success: false, error: 'orderId is required.' });
     }
-    const r = await shipOne(orderId, mode, body.orderSnapshot);
+    const r = await shipOne(orderId, mode, body.orderSnapshot, strOrUndef(body.codeStopdesk));
     return res.status(r.http).json(r.body);
   }
 

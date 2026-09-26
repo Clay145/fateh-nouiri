@@ -17,6 +17,7 @@ import { getMetaAccessToken, getMetaCurrency, getMetaPixelId, META_PIXEL_ID_FALL
 import { handleMetaErrorBody } from './api/_metaToken';
 import {
   EcomMode,
+  fetchEcomDirectory,
   getEcomConfig,
   isEcomConfigured,
   shipOrderToEcom,
@@ -51,6 +52,7 @@ interface OrderItem {
   deliveryTracking?: string;
   deliveryStatus?: 'none' | 'shipped' | 'failed';
   deliveryMode?: 'domicile' | 'stopdesk';
+  deliveryCodeStopdesk?: string;
   deliveryShippedAt?: number;
   deliveryError?: string | null;
 }
@@ -1252,7 +1254,7 @@ async function startServer() {
     return 'domicile';
   }
 
-  async function shipSingleOrderToEcom(orderId: string, mode: EcomMode, snapshot?: any) {
+  async function shipSingleOrderToEcom(orderId: string, mode: EcomMode, snapshot?: any, codeStopdesk?: string) {
     // Same ordering as the Vercel path: valid snapshot wins immediately so a
     // slow store never blocks the push; orderCode stays the idempotency key.
     let order = orders.find((o) => o.id === orderId || o.orderCode === orderId);
@@ -1301,6 +1303,7 @@ async function startServer() {
         contentId: order.contentId,
         totalPrice: Number(order.totalPrice) || 0,
         notes: order.notes,
+        ...(codeStopdesk && codeStopdesk.trim() ? { codeStopdesk: codeStopdesk.trim() } : {}),
       },
       mode,
       { env: process.env as Record<string, string | undefined> }
@@ -1311,6 +1314,7 @@ async function startServer() {
       order.deliveryStatus = 'shipped';
       order.deliveryShippedAt = Date.now();
       if (result.tracking) order.deliveryTracking = result.tracking;
+      if (codeStopdesk && codeStopdesk.trim()) order.deliveryCodeStopdesk = codeStopdesk.trim();
       order.deliveryError = null;
     } else {
       order.deliveryProvider = 'ecom_delivery';
@@ -1339,9 +1343,40 @@ async function startServer() {
     });
   });
 
+  // Ecom directories passthrough (communes / stopdesks / wilayas) - Protected
+  const handleEcomDirectory = async (req: Request, res: Response) => {
+    const resource = String(req.query.resource || req.params.resource || '').trim();
+    if (resource !== 'communes' && resource !== 'stopdesks' && resource !== 'wilayas') {
+      return res.status(400).json({ success: false, error: 'Unknown directory resource.' });
+    }
+    const idWilaya = String(req.query.id_wilaya || req.query.wilaya || '').trim();
+    const query: Record<string, string> = {};
+    if ((resource === 'communes' || resource === 'stopdesks') && idWilaya) query.id_wilaya = idWilaya;
+    const dir = await fetchEcomDirectory(resource, query, { env: process.env as Record<string, string | undefined> });
+    if (!dir.ok) {
+      return res.status(dir.status || 502).json({ success: false, error: dir.error, items: [] });
+    }
+    return res.json({ success: true, items: dir.items });
+  };
+
+  app.get('/api/ecom/communes', checkAdminAuth, (req: Request, res: Response) => {
+    (req.query as Record<string, string>).resource = 'communes';
+    void handleEcomDirectory(req, res);
+  });
+  app.get('/api/ecom/stopdesks', checkAdminAuth, (req: Request, res: Response) => {
+    (req.query as Record<string, string>).resource = 'stopdesks';
+    void handleEcomDirectory(req, res);
+  });
+  app.get('/api/ecom/wilayas', checkAdminAuth, (req: Request, res: Response) => {
+    (req.query as Record<string, string>).resource = 'wilayas';
+    void handleEcomDirectory(req, res);
+  });
+
   const handleEcomShip = async (req: Request, res: Response) => {
     const body = req.body || {};
     const mode = normalizeEcomMode(body.mode || body.deliveryMode);
+    const strOrUndef = (v: unknown): string | undefined =>
+      typeof v === 'string' && v.trim() ? v.trim() : undefined;
     const ids = Array.isArray(body.orderIds) ? body.orderIds.map(String).filter(Boolean) : null;
     if (ids) {
       if (ids.length === 0 || ids.length > 50) {
@@ -1354,7 +1389,8 @@ async function startServer() {
             ? normalizeEcomMode((body.modes as Record<string, unknown>)[id])
             : mode;
           const snapshots = (body.orderSnapshots && typeof body.orderSnapshots === 'object' ? body.orderSnapshots : {}) as Record<string, unknown>;
-          const r = await shipSingleOrderToEcom(id, perMode, snapshots[id]);
+          const codes = (body.codeStopdesks && typeof body.codeStopdesks === 'object' ? body.codeStopdesks : {}) as Record<string, unknown>;
+          const r = await shipSingleOrderToEcom(id, perMode, snapshots[id], strOrUndef(codes[id]) || strOrUndef(body.codeStopdesk));
           results.push({ orderId: id, http: r.http, ...(r.body as Record<string, unknown>) });
         } catch (e) {
           results.push({ orderId: id, http: 500, success: false, error: (e as Error)?.message || String(e) });
@@ -1367,7 +1403,7 @@ async function startServer() {
     if (!orderId) {
       return res.status(400).json({ success: false, error: 'orderId is required.' });
     }
-    const r = await shipSingleOrderToEcom(orderId, mode, body.orderSnapshot);
+    const r = await shipSingleOrderToEcom(orderId, mode, body.orderSnapshot, strOrUndef(body.codeStopdesk));
     return res.status(r.http).json(r.body);
   };
 
