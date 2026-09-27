@@ -450,17 +450,50 @@ export function trackPixelEvent(
  * Override with VITE_META_CURRENCY (DZD/EUR/USD).
  */
 export function getMetaConversionAmount(dzdAmount: number = 9500): { value: number; currency: string } {
+  const raw = Number(dzdAmount);
+  const dzd = Number.isFinite(raw) && raw > 0 ? raw : 9500;
+  if (!Number.isFinite(raw) || raw <= 0) {
+    console.warn(`[Meta Pixel] Invalid DZD amount (${String(dzdAmount)}) — falling back to 9500.`);
+  }
   const metaCurrency = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_META_CURRENCY
     ? (import.meta as any).env.VITE_META_CURRENCY
     : 'USD').toUpperCase();
 
   if (metaCurrency === 'DZD') {
-    return { value: dzdAmount, currency: 'DZD' };
+    return { value: dzd, currency: 'DZD' };
   }
   if (metaCurrency === 'EUR') {
-    return { value: Number((dzdAmount / 145).toFixed(2)), currency: 'EUR' };
+    return { value: Number((dzd / 145).toFixed(2)), currency: 'EUR' };
   }
-  return { value: Number((dzdAmount / 135).toFixed(2)), currency: 'USD' };
+  return { value: Number((dzd / 135).toFixed(2)), currency: 'USD' };
+}
+
+/**
+ * Convert a DZD amount to the active reporting currency (same divisors as
+ * getMetaConversionAmount). Use for EVERY monetary custom_data field —
+ * discount_value, predicted_ltv, item_price — never mix raw DZD with a
+ * converted value in one event: Meta flags it as invalid price data.
+ */
+export function toReportingCurrency(dzdAmount: number): number {
+  return getMetaConversionAmount(dzdAmount).value;
+}
+
+/** Guard: monetary inputs must be finite and > 0, else fall back loudly. */
+export function assertPositiveValue(v: unknown, fallback: number, label: string): number {
+  const n = Number(v);
+  if (Number.isFinite(n) && n > 0) return n;
+  console.warn(`[Meta Pixel] Invalid ${label} (${String(v)}) — falling back to ${fallback}.`);
+  return fallback;
+}
+
+/**
+ * Unit price so that quantity × item_price == event value (±1¢ rounding).
+ * contents[].item_price must be PER-ITEM, never the order total.
+ */
+export function unitPriceFor(totalValue: number, units?: number | null): number {
+  const q = Number(units);
+  const qty = Number.isFinite(q) && q > 0 ? Math.min(10, Math.floor(q)) : 1;
+  return Number((totalValue / qty).toFixed(2));
 }
 
 /**
@@ -498,11 +531,11 @@ export function trackAddToCart(params?: {
   ctaLabel?: string;
 }): string {
   const eventId = params?.event_id || `atc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  const rawValue = params?.value || 9500;
+  const rawValue = assertPositiveValue(params?.value, 9500, 'AddToCart value');
   const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(rawValue);
 
   const contentId = params?.content_ids?.length ? params.content_ids[0] : 'theoria_eye_massager_pro';
-  const { contents, num_items } = buildMetaContents({ contentId, units: params?.units, itemPrice: metaValue });
+  const { contents, num_items } = buildMetaContents({ contentId, units: params?.units, itemPrice: unitPriceFor(metaValue, params?.units) });
 
   const defaultParams: Record<string, unknown> = {
     content_name: params?.content_name || 'جهاز مساج واسترخاء العينين Theoria',
@@ -518,7 +551,8 @@ export function trackAddToCart(params?: {
     shipping_value: 0,
   };
   if (params?.packageId) defaultParams.package_id = params.packageId;
-  if (typeof params?.discountValue === 'number') defaultParams.discount_value = params.discountValue;
+  // Reporting currency, never raw DZD next to a converted value.
+  if (typeof params?.discountValue === 'number') defaultParams.discount_value = toReportingCurrency(params.discountValue);
   if (params?.wilayaCode) defaultParams.wilaya_code = params.wilayaCode;
   if (params?.trafficSource) defaultParams.traffic_source = params.trafficSource;
   if (params?.deviceType) defaultParams.device_type = params.deviceType;
@@ -550,14 +584,14 @@ export function trackInitiateCheckout(params?: {
   deviceType?: string;
 }): string {
   const eventId = params?.event_id || `ic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  const rawValue = params?.value || 9500;
+  const rawValue = assertPositiveValue(params?.value, 9500, 'InitiateCheckout value');
   const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(rawValue);
 
   const contentId = params?.content_ids?.length ? params.content_ids[0] : 'theoria_eye_massager_pro';
   const { contents, num_items } = buildMetaContents({
     contentId,
     units: params?.units ?? params?.num_items,
-    itemPrice: metaValue,
+    itemPrice: unitPriceFor(metaValue, params?.units ?? params?.num_items),
   });
 
   const defaultParams: Record<string, unknown> = {
@@ -574,7 +608,8 @@ export function trackInitiateCheckout(params?: {
     shipping_value: 0,
   };
   if (params?.packageId) defaultParams.package_id = params.packageId;
-  if (typeof params?.discountValue === 'number') defaultParams.discount_value = params.discountValue;
+  // Reporting currency, never raw DZD next to a converted value.
+  if (typeof params?.discountValue === 'number') defaultParams.discount_value = toReportingCurrency(params.discountValue);
   if (params?.wilayaCode) defaultParams.wilaya_code = params.wilayaCode;
   if (params?.trafficSource) defaultParams.traffic_source = params.trafficSource;
   if (params?.deviceType) defaultParams.device_type = params.deviceType;
@@ -639,7 +674,7 @@ export function trackPurchase(params: {
 
   // 2. Generate canonical eventID shared with Server CAPI
   const canonicalEventId = params.event_id || generatePurchaseEventId(orderCode);
-  const rawPrice = Number(params.value) || 9500;
+  const rawPrice = assertPositiveValue(params.value, 9500, 'Purchase value');
   const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(rawPrice);
 
   const testEventCode = params.test_event_code ||
@@ -649,6 +684,14 @@ export function trackPurchase(params: {
         undefined
       : undefined);
 
+  // Per-item price: quantity × item_price must equal the event value.
+  const purchaseContentId = params.content_ids?.length ? params.content_ids[0] : undefined;
+  const { contents: purchaseContents, num_items: purchaseNumItems } = buildMetaContents({
+    contentId: purchaseContentId,
+    units: params.units,
+    itemPrice: unitPriceFor(metaValue, params.units),
+  });
+
   const payload: Record<string, unknown> = {
     value: metaValue,
     currency: metaCurrency,
@@ -656,24 +699,17 @@ export function trackPurchase(params: {
     content_type: 'product',
     content_category: 'eye_care_device',
     content_ids: params.content_ids?.length ? params.content_ids : ['theoria_eye_massager_pro'],
-    contents: buildMetaContents({
-      contentId: params.content_ids?.length ? params.content_ids[0] : undefined,
-      units: params.units,
-      itemPrice: metaValue,
-    }).contents,
-    num_items: buildMetaContents({
-      contentId: params.content_ids?.length ? params.content_ids[0] : undefined,
-      units: params.units,
-      itemPrice: metaValue,
-    }).num_items,
+    contents: purchaseContents,
+    num_items: purchaseNumItems,
     order_id: orderCode,
     original_value: rawPrice,
     original_currency: 'DZD',
     shipping_value: 0,
   };
   if (params.packageId) payload.package_id = params.packageId;
-  if (typeof params.discountValue === 'number') payload.discount_value = params.discountValue;
-  if (typeof params.predictedLtv === 'number') payload.predicted_ltv = params.predictedLtv;
+  // Reporting currency everywhere — never raw DZD next to a converted value.
+  if (typeof params.discountValue === 'number') payload.discount_value = toReportingCurrency(params.discountValue);
+  if (typeof params.predictedLtv === 'number') payload.predicted_ltv = toReportingCurrency(params.predictedLtv);
   if (params.wilayaCode) payload.wilaya_code = params.wilayaCode;
 
   if (testEventCode) {

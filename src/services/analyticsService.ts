@@ -1,4 +1,4 @@
-import { trackAddToCart, trackInitiateCheckout, trackPurchase, trackPixelEvent, trackPageView, getFbpCookie, getFbcCookie, getMetaConversionAmount } from '../utils/pixel';
+import { trackAddToCart, trackInitiateCheckout, trackPurchase, trackPixelEvent, trackPageView, getFbpCookie, getFbcCookie, getMetaConversionAmount, buildMetaContents, unitPriceFor } from '../utils/pixel';
 
 export type FunnelStep =
   | 'page_view'
@@ -751,14 +751,25 @@ export function trackContentEngagement(): void {
       'theoria_eye_massager_double',
       'theoria_eye_massager_triple',
     ];
+    // ROAS price parity: contents[] with per-item price (qty × item_price == value)
+    // so the browser ViewContent leg matches the server CAPI leg exactly.
+    const { contents: vcContents, num_items: vcNumItems } = buildMetaContents({
+      contentId: catalogIds[0],
+      units: 1,
+      itemPrice: unitPriceFor(vcValue, 1),
+    });
     trackPixelEvent('ViewContent', {
       content_name: 'جهاز مساج واسترخاء العينين Theoria',
       content_type: 'product',
       content_category: 'eye_care_device',
       content_ids: catalogIds,
+      contents: vcContents,
       value: vcValue,
       currency: vcCurrency,
-      num_items: 1,
+      original_value: 9500,
+      original_currency: 'DZD',
+      num_items: vcNumItems,
+      shipping_value: 0,
       traffic_source: session.source,
       device_type: session.device,
     }, { eventID: vcEventId });

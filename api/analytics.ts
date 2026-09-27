@@ -301,8 +301,16 @@ async function sendCapiStandardEvent(params: {
 
   // Reporting currency defaults to USD: fbevents.js rejects DZD
   // ("Parameter 'currency' is invalid"), so browser + CAPI must agree on USD.
+  // PageView carries NO monetary fields per Meta spec (value/currency on a
+  // PageView triggers the "Send valid price data" ROAS warning); Lead and
+  // all commerce events keep them.
+  const isPageView = params.eventName === 'PageView';
   const metaCurrency = getMetaCurrency();
-  const rawValue = Number(params.value) || 9500;
+  const rawInput = Number(params.value);
+  const rawValue = Number.isFinite(rawInput) && rawInput > 0 ? rawInput : 9500;
+  if (!isPageView && (!Number.isFinite(rawInput) || rawInput <= 0)) {
+    console.warn(`[Meta CAPI] Invalid ${params.eventName} value (${String(params.value)}) — falling back to 9500 DZD input.`);
+  }
   const value =
     metaCurrency === 'DZD' ? rawValue : Number((rawValue / (metaCurrency === 'EUR' ? 145 : 135)).toFixed(2));
   const currency = metaCurrency === 'DZD' || metaCurrency === 'EUR' ? metaCurrency : 'USD';
@@ -310,20 +318,30 @@ async function sendCapiStandardEvent(params: {
   const resolvedContentIds = params.contentIds?.length ? params.contentIds : ['theoria_eye_massager_pro'];
   const qtyRaw = Number(params.units ?? params.numItems);
   const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? Math.min(10, Math.floor(qtyRaw)) : 1;
+  const divisor = metaCurrency === 'EUR' ? 145 : 135;
+  // Per-item price (quantity × item_price == value) and discount converted to
+  // the reporting currency — never raw DZD next to a converted value.
+  const unitPrice = Number((value / qty).toFixed(2));
   const wilayaCode = params.wilayaCode || extractDzWilayaCode(params.wilaya);
   const customData: Record<string, unknown> = {
-    value,
-    currency,
     content_name: params.contentName || 'جهاز مساج واسترخاء العينين Theoria',
     content_ids: resolvedContentIds,
     content_type: 'product',
     content_category: 'eye_care_device',
-    num_items: qty,
-    contents: [{ id: resolvedContentIds[0], quantity: qty, item_price: value }],
-    shipping_value: 0,
   };
+  if (!isPageView) {
+    customData.value = value;
+    customData.currency = currency;
+    customData.num_items = qty;
+    customData.contents = [{ id: resolvedContentIds[0], quantity: qty, item_price: unitPrice }];
+    customData.shipping_value = 0;
+  }
   if (params.packageId) customData.package_id = params.packageId;
-  if (typeof params.discountValue === 'number') customData.discount_value = params.discountValue;
+  if (!isPageView && typeof params.discountValue === 'number') {
+    customData.discount_value = metaCurrency === 'DZD'
+      ? params.discountValue
+      : Number((params.discountValue / divisor).toFixed(2));
+  }
   if (wilayaCode) customData.wilaya_code = wilayaCode;
   if (params.ctaLabel) customData.cta_label = params.ctaLabel;
   if (params.fieldCompleted) customData.field_completed = params.fieldCompleted;

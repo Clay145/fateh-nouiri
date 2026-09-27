@@ -256,8 +256,16 @@ async function processMetaCapiStandardEvent(params: {
 
   // Reporting currency defaults to USD: fbevents.js rejects DZD
   // ("Parameter 'currency' is invalid"), so browser + CAPI must agree on USD.
+  // PageView carries NO monetary fields per Meta spec (value/currency on a
+  // PageView triggers the "Send valid price data" ROAS warning); Lead and
+  // all commerce events keep them.
+  const isStdPageView = params.eventName === 'PageView';
   const metaCurrency = getMetaCurrency();
-  const rawValue = Number(params.value) || 9500;
+  const rawStdInput = Number(params.value);
+  const rawValue = Number.isFinite(rawStdInput) && rawStdInput > 0 ? rawStdInput : 9500;
+  if (!isStdPageView && (!Number.isFinite(rawStdInput) || rawStdInput <= 0)) {
+    console.warn(`[Meta CAPI] Invalid ${params.eventName} value (${String(params.value)}) — falling back to 9500 DZD input.`);
+  }
   const value = metaCurrency === 'DZD'
     ? rawValue
     : Number((rawValue / (metaCurrency === 'EUR' ? 145 : 135)).toFixed(2));
@@ -267,19 +275,27 @@ async function processMetaCapiStandardEvent(params: {
   const stdQtyRaw = Number(params.units ?? params.numItems);
   const stdQty = Number.isFinite(stdQtyRaw) && stdQtyRaw > 0 ? Math.min(10, Math.floor(stdQtyRaw)) : 1;
   const stdWilayaCode = params.wilayaCode || (/^(\d{2})\b/.exec(String(params.wilaya || ''))?.[1] || '');
+  // Per-item price (quantity × item_price == value). Reporting currency
+  // everywhere — never raw DZD next to a converted value.
+  const stdUnitPrice = Number((value / stdQty).toFixed(2));
+  const stdDiscount = typeof params.discountValue === 'number'
+    ? (metaCurrency === 'DZD' ? params.discountValue : Number((params.discountValue / (metaCurrency === 'EUR' ? 145 : 135)).toFixed(2)))
+    : undefined;
   const stdCustom: Record<string, unknown> = {
-    value,
-    currency,
     content_name: params.contentName || 'جهاز مساج واسترخاء العينين Theoria',
     content_ids: stdContentIds,
     content_type: params.contentType || 'product',
     content_category: 'eye_care_device',
-    num_items: stdQty,
-    contents: [{ id: stdContentIds[0], quantity: stdQty, item_price: value }],
-    shipping_value: 0,
   };
+  if (!isStdPageView) {
+    stdCustom.value = value;
+    stdCustom.currency = currency;
+    stdCustom.num_items = stdQty;
+    stdCustom.contents = [{ id: stdContentIds[0], quantity: stdQty, item_price: stdUnitPrice }];
+    stdCustom.shipping_value = 0;
+    if (stdDiscount !== undefined) stdCustom.discount_value = stdDiscount;
+  }
   if (params.packageId) stdCustom.package_id = params.packageId;
-  if (typeof params.discountValue === 'number') stdCustom.discount_value = params.discountValue;
   if (stdWilayaCode) stdCustom.wilaya_code = stdWilayaCode;
   if (params.ctaLabel) stdCustom.cta_label = params.ctaLabel;
   if (params.fieldCompleted) stdCustom.field_completed = params.fieldCompleted;
@@ -459,6 +475,14 @@ async function processMetaCapiPurchase(
       ? Number((purchasePredictedLtv / 145).toFixed(2))
       : purchasePredictedLtv;
 
+  // Reporting currency everywhere: unit price (qty × item_price == value)
+  // and converted discount — never raw DZD next to a converted value.
+  const purchaseDivisor = effectiveCurrency === 'EUR' ? 145 : 135;
+  const purchaseUnitPrice = Number((effectiveValue / purchaseUnits).toFixed(2));
+  const purchaseDiscountConverted = effectiveCurrency === 'DZD'
+    ? purchaseDiscount
+    : Number((purchaseDiscount / purchaseDivisor).toFixed(2));
+
   const customData: Record<string, unknown> = {
     currency: effectiveCurrency,
     value: effectiveValue,
@@ -470,14 +494,14 @@ async function processMetaCapiPurchase(
     num_items: purchaseUnits,
     original_currency: 'DZD',
     original_value: rawPrice,
-    discount_value: purchaseDiscount,
+    discount_value: purchaseDiscountConverted,
     shipping_value: 0,
     predicted_ltv: purchasePredictedConverted,
     contents: [
       {
         id: purchaseContentId,
         quantity: purchaseUnits,
-        item_price: effectiveValue,
+        item_price: purchaseUnitPrice,
       },
     ],
   };

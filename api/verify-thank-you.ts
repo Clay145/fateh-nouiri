@@ -61,6 +61,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const canonicalEventId = order?.fb_event_id || order?.eventId || `purchase_${order_id}`;
+  // UI-only receipt fields: value/currency here are DISPLAY DZD for the
+  // thank-you receipt. The browser Pixel leg recomputes USD reporting
+  // currency internally (getMetaConversionAmount) — never send these to fbq.
   const orderValue = Number(order?.totalPrice) || 9500;
   // Only return a test code when explicitly requested (query/header) or stored
   // on the order. NEVER fall back to a META_TEST_EVENT_CODE env var here:

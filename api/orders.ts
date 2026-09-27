@@ -418,23 +418,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // (orderMetaCurrency/orderEffectiveCurrency computed above; reused here.)
         const metaCurrency = orderMetaCurrency;
         const effectiveCurrency = orderEffectiveCurrency;
+        const rawTotal = Number(newOrder.totalPrice);
+        const safeTotalDzd = Number.isFinite(rawTotal) && rawTotal > 0 ? rawTotal : 9500;
+        if (!Number.isFinite(rawTotal) || rawTotal <= 0) {
+          console.warn(`[Meta CAPI] Invalid Purchase totalPrice (${String((newOrder as Record<string, unknown>).totalPrice)}) for order ${orderCode} — falling back to 9500 DZD input.`);
+        }
         const effectiveValue = effectiveCurrency === 'USD'
-          ? Number((newOrder.totalPrice / 135).toFixed(2))
-          : (effectiveCurrency === 'EUR' ? Number((newOrder.totalPrice / 145).toFixed(2)) : newOrder.totalPrice);
+          ? Number((safeTotalDzd / 135).toFixed(2))
+          : (effectiveCurrency === 'EUR' ? Number((safeTotalDzd / 145).toFixed(2)) : safeTotalDzd);
 
         // Real package economics + geo (mirrors the browser Purchase leg).
         const orderContentId = (newOrder as Record<string, unknown>).contentId as string | undefined;
         const contentIds = [orderContentId || 'theoria_eye_massager_pro'];
-        const econ = packageEconomics(orderContentId, newOrder.totalPrice);
+        const econ = packageEconomics(orderContentId, safeTotalDzd);
         const wilayaCode = extractDzWilayaCode(newOrder.wilaya);
         // Repeat-buyer value signal (best-effort Firestore lookup, never blocks).
-        let predictedLtvDzd = Number(newOrder.totalPrice) || 0;
+        let predictedLtvDzd = safeTotalDzd;
         try {
           const priors = await adminListOrdersByPhone(normalizedOrderPhone || cleanPhone, 20);
           const filtered = priors.filter((p) => p?.orderCode !== orderCode);
           if (filtered.length) {
             const spent = filtered.reduce((s, p) => s + (Number(p?.totalPrice) || 0), 0);
-            predictedLtvDzd = spent + (Number(newOrder.totalPrice) || 0);
+            predictedLtvDzd = spent + safeTotalDzd;
           }
         } catch {
           // ignore — predicted_ltv falls back to current value
@@ -444,6 +449,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           : effectiveCurrency === 'EUR'
             ? Number((predictedLtvDzd / 145).toFixed(2))
             : predictedLtvDzd;
+        // Reporting currency everywhere: unit price (qty × item_price ==
+        // value) and converted discount — never raw DZD next to converted value.
+        const v2Divisor = effectiveCurrency === 'EUR' ? 145 : 135;
+        const unitPrice = Number((effectiveValue / econ.units).toFixed(2));
+        const discountConverted = effectiveCurrency === 'DZD'
+          ? econ.discountValue
+          : Number((econ.discountValue / v2Divisor).toFixed(2));
         const customData: Record<string, unknown> = {
           currency: effectiveCurrency,
           value: effectiveValue,
@@ -454,15 +466,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           content_category: 'eye_care_device',
           num_items: econ.units,
           original_currency: 'DZD',
-          original_value: newOrder.totalPrice,
-          discount_value: econ.discountValue,
+          original_value: safeTotalDzd,
+          discount_value: discountConverted,
           shipping_value: 0,
           predicted_ltv: predictedLtv,
           contents: [
             {
               id: contentIds[0],
               quantity: econ.units,
-              item_price: effectiveValue,
+              item_price: unitPrice,
             },
           ],
         };

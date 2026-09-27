@@ -115,6 +115,9 @@ export const ThankYouPage: React.FC = () => {
                 error: 'رمز التحقق (Token) غير متطابق مع الطلب المسجل. تم حظر إطلاق حدث الشراء أمنياً.',
               };
             } else {
+              // UI-only receipt fields: value/currency are DISPLAY DZD.
+              // trackPurchase() recomputes USD reporting currency internally —
+              // never forward this currency to fbq.
               data = {
                 valid: true,
                 order_id: localOrder.orderCode || order_id,
@@ -129,6 +132,8 @@ export const ThankYouPage: React.FC = () => {
             }
           } else if (order_id && token && token.length >= 8) {
             // طلب موثق بتوكن سليم ومعرف طلب حقيقي
+            // UI-only fallback: DISPLAY DZD for the receipt; the Pixel leg
+            // converts to USD reporting currency inside trackPurchase().
             data = {
               valid: true,
               order_id,
