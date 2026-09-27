@@ -216,6 +216,15 @@ export function buildMetaContents(params: {
  * new/changed key — submit + thank-you re-hydrates with identical data are
  * no-ops. Note: 1 repeat init per typing session (base page-load init has no
  * user data yet) is inherent to progressive matching and harmless.
+ *
+ * About the console warning: the FIRST same-ID re-init per page lifetime
+ * always logs Meta's benign yellow "Duplicate Pixel ID" warning. That is
+ * Meta's official Advanced Matching pattern (user data is unknowable at the
+ * base `index.html` init), NOT an error: no event is dropped, delayed, or
+ * corrupted, and it has no effect on value/currency (ROAS price data).
+ * Callers that may repeat an identical attach (e.g. thank-you re-hydrate
+ * after a same-browser submit) should check hasAdvancedMatchingKeys() first
+ * so the journey emits at most one warning, ideally zero on thank-you.
  */
 const attachedAdvKeys: Record<string, string> = {};
 let advInitFired = false;
@@ -262,6 +271,18 @@ export function setAdvancedMatching(params: {
   } catch {
     // ignore
   }
+}
+
+/**
+ * True when this browser already attached at least one Advanced Matching key
+ * via setAdvancedMatching(). Thank-you re-hydrate uses this to skip its
+ * attach when the submit-time call ran in the same browser — avoiding a
+ * redundant same-ID re-init (and its benign console warning) with zero
+ * match-quality cost. Direct/foreign-browser landings return false and
+ * still attach once.
+ */
+export function hasAdvancedMatchingKeys(): boolean {
+  return advInitFired && Object.keys(attachedAdvKeys).length > 0;
 }
 
 /**

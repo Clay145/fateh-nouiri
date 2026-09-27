@@ -10,7 +10,7 @@ import {
   Layers,
   Sparkles,
 } from 'lucide-react';
-import { getMetaConversionAmount, trackPurchase, setAdvancedMatching, hasPurchaseFired, extractWilayaCode } from '../utils/pixel';
+import { getMetaConversionAmount, trackPurchase, setAdvancedMatching, hasAdvancedMatchingKeys, hasPurchaseFired, extractWilayaCode } from '../utils/pixel';
 import { STORE_PACKAGES } from '../data/packages';
 
 interface VerificationResult {
@@ -220,13 +220,18 @@ export const ThankYouPage: React.FC = () => {
                 purchaseDiscount = Math.max(0, (pkg.originalPrice || 0) - (pkg.price || 0));
               }
               purchaseWilayaCode = extractWilayaCode(String(stored.wilaya || data.wilaya || '')) || undefined;
-              setAdvancedMatching({
-                email: stored.email || undefined,
-                phone: stored.phone || undefined,
-                firstName: storedName[0],
-                lastName: storedName.slice(1).join(' ') || undefined,
-                externalId: ORDER_ID,
-              });
+              // Skip when the submit-time attach already ran in this browser:
+              // identical keys would only trigger a redundant same-ID re-init
+              // (benign "Duplicate Pixel ID" console warning, zero match gain).
+              if (!hasAdvancedMatchingKeys()) {
+                setAdvancedMatching({
+                  email: stored.email || undefined,
+                  phone: stored.phone || undefined,
+                  firstName: storedName[0],
+                  lastName: storedName.slice(1).join(' ') || undefined,
+                  externalId: ORDER_ID,
+                });
+              }
             } else {
               purchaseWilayaCode = extractWilayaCode(String(data.wilaya || '')) || undefined;
             }
