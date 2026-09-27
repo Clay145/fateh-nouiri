@@ -43,17 +43,19 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
   // Idempotency key for this form attempt: reused across retries/double-clicks
   // so a retry never mints a second orderCode (server dedups by orderCode).
   const attemptKeysRef = useRef<{ orderCode: string; id: string } | null>(null);
-  // Early-matching debounce: re-attaching fbq init on every keystroke is
-  // wasteful; attach at most once per value change (blur-driven).
-  const earlyMatchSigRef = useRef<string>('');
+  // Partial-identity cache: blur handlers only cache typed values for the
+  // server CAPI Lead/IC leg (hashed server-side). They intentionally NEVER
+  // call setAdvancedMatching: every fbq re-init logs Meta's "Duplicate Pixel
+  // ID" warning, and progressive blurs (name sig, then name+phone sig) would
+  // fire 2+ inits before submit for zero gain — upper-funnel events already
+  // fired anonymous before the first blur. The single browser attach happens
+  // once at submit with the final cleaned values (Purchase keeps full keys).
 
   /**
-   * Early Advanced Matching (P1): attach phone/name to the browser pixel as
-   * soon as the shopper finishes each field (blur), so AddToCart /
-   * InitiateCheckout / Lead events that fire after that point match instead
-   * of arriving anonymous. Only valid values are sent; submit re-attaches
-   * with the final cleaned values. Also caches partial identity for the
-   * server CAPI Lead/IC leg (hashed server-side).
+   * Partial identity cache (blur-driven): stores valid name/phone fragments
+   * for the server CAPI Lead/IC leg. Browser-pixel attach is submit-only
+   * (see note above) — no fbq init here, so typing never emits a
+   * "Duplicate Pixel ID" warning.
    */
   const attachEarlyMatching = (overrides?: { name?: string; phone?: string; wilayaName?: string; commune?: string }) => {
     try {
@@ -62,15 +64,6 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
       const validPhone = /^(05|06|07|02)[0-9]{8}$/.test(phoneVal) ? phoneVal : '';
       const validName = name.length >= 3 ? name : '';
       if (!validPhone && !validName) return;
-      const sig = `${validName}|${validPhone}`;
-      if (earlyMatchSigRef.current === sig) return;
-      earlyMatchSigRef.current = sig;
-      const parts = validName ? validName.split(/\s+/) : [];
-      setAdvancedMatching({
-        phone: validPhone || undefined,
-        firstName: parts[0] || undefined,
-        lastName: parts.slice(1).join(' ') || undefined,
-      });
       savePartialIdentity({
         customerName: validName || undefined,
         phone: validPhone || undefined,
