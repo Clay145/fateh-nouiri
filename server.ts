@@ -15,6 +15,7 @@ import {
 } from './api/_adminAuth';
 import { getMetaAccessToken, getMetaCurrency, getMetaPixelId, META_PIXEL_ID_FALLBACK } from './api/_metaConfig';
 import { handleMetaErrorBody } from './api/_metaToken';
+import { applyClientContext, extractClientIp, readFbcFromCookieHeader, readFbpFromCookieHeader, sanitizeAndValidateFbc, sanitizeAndValidateFbp } from './api/_metaFbc';
 import {
   EcomMode,
   fetchEcomDirectory,
@@ -125,64 +126,6 @@ function splitName(fullName: string): { firstName: string; lastName: string } {
  * Validate that an fbclid string is authentic, not truncated, and contains valid characters.
  * Genuine Meta Click IDs are Base64/Base64url-like tokens, typically 25 to 100+ characters.
  */
-function isValidFbclid(fbclid?: string | null): boolean {
-  if (!fbclid || typeof fbclid !== 'string') return false;
-  const clean = fbclid.trim().replace(/^["']|["']$/g, '');
-  const blockedPlaceholders = [
-    'test',
-    'dummy',
-    'undefined',
-    'null',
-    'none',
-    'iwar0123456789abcdef',
-    '123456',
-    'fake',
-  ];
-  if (blockedPlaceholders.includes(clean.toLowerCase())) return false;
-  if (clean.length < 25 || clean.length > 500) return false;
-  if (!/^[a-zA-Z0-9_\-]+$/.test(clean)) return false;
-  return true;
-}
-
-/**
- * Validate and clean an fbc string against Meta's official specification:
- * Format: fb.{subdomainIndex}.{creationTimeMs}.{fbclid}
- * If an raw fbclid is provided without fbc, it can synthesize a valid fbc.
- * Omit if invalid, truncated, expired (>90 days), or future-dated.
- */
-function sanitizeAndValidateFbc(rawFbc?: string | null, rawFbclid?: string | null): string | undefined {
-  if (rawFbc && typeof rawFbc === 'string') {
-    let clean = rawFbc.trim().replace(/^["']|["']$/g, '');
-    try {
-      clean = decodeURIComponent(clean);
-    } catch {
-      // keep clean
-    }
-
-    const match = clean.match(/^fb\.([0-9]+)\.([0-9]{10,15})\.([a-zA-Z0-9_\-]+)$/);
-    if (match) {
-      const subdomainIndex = match[1];
-      const creationTimeMs = Number(match[2]);
-      const fbclid = match[3];
-
-      if (isValidFbclid(fbclid)) {
-        const now = Date.now();
-        const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
-        if (creationTimeMs <= now + 300000 && creationTimeMs >= now - ninetyDaysMs) {
-          return `fb.${subdomainIndex}.${creationTimeMs}.${fbclid}`;
-        }
-      }
-    }
-  }
-
-  // IMPORTANT: Do NOT synthesize fbc on the server using Date.now() as the timestamp.
-  // The server cannot know the original ad-click time, so any synthesized fbc will have
-  // a wrong creation timestamp — Meta flags this as a "modified fbclid value" warning.
-  // fbc synthesis is handled client-side in pixel.ts getFbcCookie() where the correct
-  // click timestamp from the URL is available. If no valid fbc arrived, omit entirely.
-  // Meta official requirement: if invalid or missing, omit fbc entirely!
-  return undefined;
-}
 
 /**
  * Calculate Event Match Quality estimation (out of 10)
@@ -250,22 +193,22 @@ async function processMetaCapiStandardEvent(params: {
   if (params.wilaya) userData.st = [hashSha256(params.wilaya)];
   if (params.commune) userData.ct = [hashSha256(params.commune)];
   if (params.externalId) userData.external_id = [hashSha256(params.externalId)];
-  if (params.fbp) userData.fbp = params.fbp;
+  const fbp = sanitizeAndValidateFbp(params.fbp);
+  if (fbp) userData.fbp = fbp;
   const validatedFbc = sanitizeAndValidateFbc(params.fbc);
   if (validatedFbc) userData.fbc = validatedFbc;
-  if (params.ip) userData.client_ip_address = params.ip;
-  if (params.userAgent) userData.client_user_agent = params.userAgent;
+  // Public IP + user agent only, always as a pair (see api/_metaFbc).
+  applyClientContext(userData, { ip: params.ip, userAgent: params.userAgent });
 
   // Reporting currency defaults to USD: fbevents.js rejects DZD
   // ("Parameter 'currency' is invalid"), so browser + CAPI must agree on USD.
-  // PageView carries NO monetary fields per Meta spec (value/currency on a
-  // PageView triggers the "Send valid price data" ROAS warning); Lead and
-  // all commerce events keep them.
-  const isStdPageView = params.eventName === 'PageView';
+  // PageView and Lead carry NO monetary fields per Meta spec (a value/currency
+  // on either one is reported as "Send valid price data" and skews ROAS).
+  const isValuelessEvent = params.eventName === 'PageView' || params.eventName === 'Lead';
   const metaCurrency = getMetaCurrency();
   const rawStdInput = Number(params.value);
   const rawValue = Number.isFinite(rawStdInput) && rawStdInput > 0 ? rawStdInput : 9500;
-  if (!isStdPageView && (!Number.isFinite(rawStdInput) || rawStdInput <= 0)) {
+  if (!isValuelessEvent && (!Number.isFinite(rawStdInput) || rawStdInput <= 0)) {
     console.warn(`[Meta CAPI] Invalid ${params.eventName} value (${String(params.value)}) — falling back to 9500 DZD input.`);
   }
   const value = metaCurrency === 'DZD'
@@ -280,7 +223,7 @@ async function processMetaCapiStandardEvent(params: {
   // Per-item price (quantity × item_price == value). Reporting currency
   // everywhere — never raw DZD next to a converted value.
   const stdUnitPrice = Number((value / stdQty).toFixed(2));
-  const stdDiscount = typeof params.discountValue === 'number'
+  const stdDiscount = typeof params.discountValue === 'number' && params.discountValue > 0
     ? (metaCurrency === 'DZD' ? params.discountValue : Number((params.discountValue / (metaCurrency === 'EUR' ? 145 : 135)).toFixed(2)))
     : undefined;
   const stdCustom: Record<string, unknown> = {
@@ -289,7 +232,7 @@ async function processMetaCapiStandardEvent(params: {
     content_type: params.contentType || 'product',
     content_category: 'eye_care_device',
   };
-  if (!isStdPageView) {
+  if (!isValuelessEvent) {
     stdCustom.value = value;
     stdCustom.currency = currency;
     stdCustom.num_items = stdQty;
@@ -423,11 +366,11 @@ async function processMetaCapiPurchase(
   if (order.commune) userData.ct = [hashSha256(order.commune)];
   if (order.wilaya) userData.st = [hashSha256(order.wilaya)];
 
-  if (clientContext.fbp) userData.fbp = clientContext.fbp;
+  const fbp = sanitizeAndValidateFbp(clientContext.fbp);
+  if (fbp) userData.fbp = fbp;
   const validatedFbc = sanitizeAndValidateFbc(clientContext.fbc);
   if (validatedFbc) userData.fbc = validatedFbc;
-  if (clientContext.ip) userData.client_ip_address = clientContext.ip;
-  if (clientContext.userAgent) userData.client_user_agent = clientContext.userAgent;
+  applyClientContext(userData, { ip: clientContext.ip, userAgent: clientContext.userAgent });
 
   // Reporting currency defaults to USD: fbevents.js rejects DZD
   // ("Parameter 'currency' is invalid"), so browser + CAPI must agree on USD.
@@ -496,7 +439,6 @@ async function processMetaCapiPurchase(
     num_items: purchaseUnits,
     original_currency: 'DZD',
     original_value: rawPrice,
-    discount_value: purchaseDiscountConverted,
     shipping_value: 0,
     predicted_ltv: purchasePredictedConverted,
     contents: [
@@ -507,6 +449,8 @@ async function processMetaCapiPurchase(
       },
     ],
   };
+  // discount_value: 0 is not a discount and reads as invalid price data.
+  if (purchaseDiscountConverted > 0) customData.discount_value = purchaseDiscountConverted;
   if (purchasePackageId) customData.package_id = purchasePackageId;
   if (purchaseWilayaCode) customData.wilaya_code = purchaseWilayaCode;
 
@@ -984,23 +928,15 @@ async function startServer() {
     const fb_token = crypto.randomBytes(16).toString('hex');
     const fb_sent = 0;
 
-    // Extract Meta matching identifiers
-    // Extract Meta matching identifiers with sanitization and validation
+    // Extract Meta matching identifiers with strict shared validation.
     const cookieHeader = req.headers.cookie || '';
-    let cookieFbp = cookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
-    if (cookieFbp) {
-      cookieFbp = cookieFbp.trim().replace(/^["']|["']$/g, '');
-      try { cookieFbp = decodeURIComponent(cookieFbp); } catch { }
-    }
-    let rawCookieFbc = cookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
-    if (rawCookieFbc) {
-      rawCookieFbc = rawCookieFbc.trim().replace(/^["']|["']$/g, '');
-      try { rawCookieFbc = decodeURIComponent(rawCookieFbc); } catch { }
-    }
+    const cookieFbp = readFbpFromCookieHeader(cookieHeader);
+    const rawCookieFbc = readFbcFromCookieHeader(cookieHeader);
 
-    const rawFbclid = (req.query.fbclid as string) || body.fbclid;
-    const fbc = sanitizeAndValidateFbc(body.fbc || rawCookieFbc, rawFbclid);
-    const fbp = body.fbp || cookieFbp;
+    // fbc is validated only — never rebuilt from a bare fbclid. A synthesized
+    // fbc carries the wrong click time and is flagged by Meta.
+    const fbc = sanitizeAndValidateFbc(body.fbc || rawCookieFbc);
+    const fbp = sanitizeAndValidateFbp(body.fbp || cookieFbp);
 
     const newOrder: OrderItem = {
       id: body.id || `ord_${Date.now()}`,
@@ -1243,13 +1179,17 @@ async function startServer() {
       eventId: testEventId,
     };
 
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
+    const clientIp = extractClientIp(req.headers as Record<string, string | string[] | undefined>) || '';
     const userAgent = req.headers['user-agent'] || '';
 
-    const testFbc = sanitizeAndValidateFbc(req.body?.fbc, req.body?.fbclid);
+    const testFbc = sanitizeAndValidateFbc(req.body?.fbc);
 
+    // No invented fbp: the previous fake `fb.1.<now>.<random>` id put a browser
+    // id on the dataset that no real browser ever produced, polluting the
+    // visitor graph. The test event now goes out with hashed customer data
+    // plus real fbp/fbc when the caller supplies them, and nothing else.
     const result = await processMetaCapiPurchase(mockOrder, {
-      fbp: `fb.1.${Date.now()}.${Math.floor(Math.random() * 1000000000)}`,
+      ...(req.body?.fbp ? { fbp: String(req.body.fbp) } : {}),
       ...(testFbc ? { fbc: testFbc } : {}),
       ip: clientIp,
       userAgent,
@@ -1569,22 +1509,13 @@ async function startServer() {
       FUNNEL_TO_CAPI[event];
 
     if (resolvedMetaEventName && eventId) {
-      // Cookie fallback: if the beacon body lacks fbp/fbc, read from request cookies
-      // and sanitize/validate fbc and fbclid strictly
+      // Cookie fallback: strict shared validation (see api/_metaFbc). A value
+      // Meta would read as a modified click id is dropped, never repaired.
       const trackCookieHeader = req.headers.cookie || '';
-      let trackCookieFbp = trackCookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
-      if (trackCookieFbp) {
-        trackCookieFbp = trackCookieFbp.trim().replace(/^["']|["']$/g, '');
-        try { trackCookieFbp = decodeURIComponent(trackCookieFbp); } catch { }
-      }
-      let trackRawCookieFbc = trackCookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
-      if (trackRawCookieFbc) {
-        trackRawCookieFbc = trackRawCookieFbc.trim().replace(/^["']|["']$/g, '');
-        try { trackRawCookieFbc = decodeURIComponent(trackRawCookieFbc); } catch { }
-      }
+      const trackCookieFbp = readFbpFromCookieHeader(trackCookieHeader);
+      const trackRawCookieFbc = readFbcFromCookieHeader(trackCookieHeader);
 
-      const trackFbclid = (req.query.fbclid as string) || (req.body || {}).fbclid;
-      const validatedTrackFbc = sanitizeAndValidateFbc((fbc ? String(fbc) : undefined) || trackRawCookieFbc, trackFbclid);
+      const validatedTrackFbc = sanitizeAndValidateFbc((fbc ? String(fbc) : undefined) || trackRawCookieFbc);
 
       processMetaCapiStandardEvent({
         eventName: resolvedMetaEventName,
@@ -1609,10 +1540,10 @@ async function startServer() {
         trafficSource: strOrUndef(bodyAny.trafficSource),
         deviceType: strOrUndef(bodyAny.deviceType),
         dwellS: numOrUndef(bodyAny.dwellS),
-        fbp: (fbp ? String(fbp) : undefined) || trackCookieFbp,
+        fbp: sanitizeAndValidateFbp((fbp ? String(fbp) : undefined) || trackCookieFbp),
         fbc: validatedTrackFbc,
         userAgent: (req.headers['user-agent'] as string) || undefined,
-        ip: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || undefined,
+        ip: extractClientIp(req.headers as Record<string, string | string[] | undefined>),
         // Prefer the real page URL sent by the client so event_source_url is
         // identical to the browser event's URL.
         referer: (pageUrl ? String(pageUrl) : undefined) || (req.headers['referer'] as string) || undefined,

@@ -4,6 +4,7 @@ import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
 import { adminCreateOrder, adminDeleteOrder, adminGetOrderByCode, adminGetOrderByCodeStrict, adminListOrders, adminListOrdersByPhone, adminListOrdersSince, adminPatchOrder, getFirestoreDiagnostics, isAdminDbConfigured } from './_firestoreAdmin.js';
 import { getMetaAccessToken, getMetaCurrency, getMetaPixelId } from './_metaConfig.js';
 import { handleMetaErrorBody } from './_metaToken.js';
+import { applyClientContext, extractClientIp, readFbcFromCookieHeader, readFbpFromCookieHeader, sanitizeAndValidateFbc, sanitizeAndValidateFbp } from './_metaFbc.js';
 
 interface VercelRequest {
   method?: string;
@@ -83,63 +84,6 @@ function packageEconomics(contentId?: string | null, totalPrice?: number): {
  * Validate that an fbclid string is authentic, not truncated, and contains valid characters.
  * Genuine Meta Click IDs are Base64/Base64url-like tokens, typically 25 to 100+ characters.
  */
-function isValidFbclid(fbclid?: string | null): boolean {
-  if (!fbclid || typeof fbclid !== 'string') return false;
-  const clean = fbclid.trim().replace(/^["']|["']$/g, '');
-  const blockedPlaceholders = [
-    'test',
-    'dummy',
-    'undefined',
-    'null',
-    'none',
-    'iwar0123456789abcdef',
-    '123456',
-    'fake',
-  ];
-  if (blockedPlaceholders.includes(clean.toLowerCase())) return false;
-  if (clean.length < 25 || clean.length > 500) return false;
-  if (!/^[a-zA-Z0-9_\-]+$/.test(clean)) return false;
-  return true;
-}
-
-/**
- * Validate and clean an fbc string against Meta's official specification:
- * Format: fb.{subdomainIndex}.{creationTimeMs}.{fbclid}
- * If a raw fbclid is provided without fbc, it can synthesize a valid fbc.
- * Omit if invalid, truncated, expired (>90 days), or future-dated.
- */
-function sanitizeAndValidateFbc(rawFbc?: string | null, rawFbclid?: string | null): string | undefined {
-  if (rawFbc && typeof rawFbc === 'string') {
-    let clean = rawFbc.trim().replace(/^["']|["']$/g, '');
-    try {
-      clean = decodeURIComponent(clean);
-    } catch {
-      // keep clean
-    }
-
-    const match = clean.match(/^fb\.([0-9]+)\.([0-9]{10,15})\.([a-zA-Z0-9_\-]+)$/);
-    if (match) {
-      const subdomainIndex = match[1];
-      const creationTimeMs = Number(match[2]);
-      const fbclid = match[3];
-
-      if (isValidFbclid(fbclid)) {
-        const now = Date.now();
-        const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
-        if (creationTimeMs <= now + 300000 && creationTimeMs >= now - ninetyDaysMs) {
-          return `fb.${subdomainIndex}.${creationTimeMs}.${fbclid}`;
-        }
-      }
-    }
-  }
-
-  // IMPORTANT: Do NOT synthesize fbc on the server using Date.now() as the timestamp.
-  // The server cannot know the original ad-click time, so any synthesized fbc will have
-  // a wrong creation timestamp — Meta detects this as a "modified fbclid value" warning.
-  // fbc synthesis is handled client-side in pixel.ts getFbcCookie() where the correct
-  // click timestamp from the URL is available. If no valid fbc arrived, omit entirely.
-  return undefined;
-}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (
@@ -294,30 +238,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const testEventCode = rawTestCode.trim() ? rawTestCode.trim() : undefined;
     const testParamSuffix = testEventCode ? `&test_event_code=${encodeURIComponent(testEventCode)}` : '';
 
-    // Cookie fallback for fbp/fbc with strict sanitization and validation:
+    // Cookie fallback for fbp/fbc with strict sanitization and validation.
+    // Shared validators reject anything Meta would read as a modified click
+    // id (truncated, future-dated, older than 90 days) instead of repairing it.
     const headerFirst = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
     const orderCookieHeader = headerFirst(req.headers['cookie']) || '';
-    let orderCookieFbp = orderCookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
-    if (orderCookieFbp) {
-      orderCookieFbp = orderCookieFbp.trim().replace(/^["']|["']$/g, '');
-      try { orderCookieFbp = decodeURIComponent(orderCookieFbp); } catch {}
-    }
-    let rawOrderCookieFbc = orderCookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
-    if (rawOrderCookieFbc) {
-      rawOrderCookieFbc = rawOrderCookieFbc.trim().replace(/^["']|["']$/g, '');
-      try { rawOrderCookieFbc = decodeURIComponent(rawOrderCookieFbc); } catch {}
-    }
+    const orderCookieFbp = readFbpFromCookieHeader(orderCookieHeader);
+    const rawOrderCookieFbc = readFbcFromCookieHeader(orderCookieHeader);
 
     const rawOrderFbclid = req.query?.fbclid as string | string[] | undefined;
     const orderFbclid =
       (Array.isArray(rawOrderFbclid) ? rawOrderFbclid[0] : rawOrderFbclid) ||
       (body.fbclid ? String(body.fbclid) : undefined);
 
-    const resolvedFbp = (body.fbp ? String(body.fbp) : undefined) || orderCookieFbp;
-    const resolvedFbc = sanitizeAndValidateFbc(
-      (body.fbc ? String(body.fbc) : undefined) || rawOrderCookieFbc,
-      orderFbclid
-    );
+    const resolvedFbp = sanitizeAndValidateFbp((body.fbp ? String(body.fbp) : undefined) || orderCookieFbp);
+    // No fbclid-based synthesis here on purpose: a server-built fbc always
+    // carries the wrong creation time and triggers "Server sending modified
+    // fbclid value in fbc".
+    const resolvedFbc = sanitizeAndValidateFbc((body.fbc ? String(body.fbc) : undefined) || rawOrderCookieFbc);
+    if (orderFbclid && !resolvedFbc) {
+      console.warn(
+        `[Meta CAPI] fbclid present for ${orderCode} but no valid fbc arrived — sending the event without fbc (Meta rule: omit, never guess).`
+      );
+    }
 
     const newOrder: Record<string, any> = {
       id: body.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -400,10 +343,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           external_id: [hashSha256(orderCode)],
         };
         if (body.email) userData.em = [hashSha256(String(body.email))];
-        const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() || (req.headers['x-real-ip'] as string) || undefined;
+        const clientIp = extractClientIp(req.headers as Record<string, string | string[] | undefined>);
         const clientUa = (req.headers['user-agent'] as string) || undefined;
-        if (clientIp) userData.client_ip_address = clientIp;
-        if (clientUa) userData.client_user_agent = clientUa;
+        applyClientContext(userData, { ip: clientIp, userAgent: clientUa });
         const { firstName: ordFn, lastName: ordLn } = splitDzName(body.customerName);
         if (ordFn) userData.fn = [hashSha256(ordFn)];
         if (ordLn) userData.ln = [hashSha256(ordLn)];
@@ -467,7 +409,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           num_items: econ.units,
           original_currency: 'DZD',
           original_value: safeTotalDzd,
-          discount_value: discountConverted,
           shipping_value: 0,
           predicted_ltv: predictedLtv,
           contents: [
@@ -478,6 +419,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             },
           ],
         };
+        // A zero discount is not a discount: sending discount_value: 0 next to
+        // a real value is one of the shapes Meta reports as invalid price data.
+        if (discountConverted > 0) customData.discount_value = discountConverted;
         if (econ.packageId) customData.package_id = econ.packageId;
         if (wilayaCode) customData.wilaya_code = wilayaCode;
 

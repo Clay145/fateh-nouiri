@@ -6,6 +6,7 @@ import { applyCors } from './_cors.js';
 import { extractBearerToken, verifyAdminToken } from './_adminAuth.js';
 import { getMetaAccessToken, getMetaCurrency, getMetaPixelId, isMetaPixelFallback } from './_metaConfig.js';
 import { handleMetaErrorBody } from './_metaToken.js';
+import { applyClientContext, extractClientIp, readFbcFromCookieHeader, readFbpFromCookieHeader, sanitizeAndValidateFbc, sanitizeAndValidateFbp } from './_metaFbc.js';
 
 interface VercelRequest {
   method?: string;
@@ -166,65 +167,6 @@ function extractDzWilayaCode(wilaya?: string | null): string {
  * Validate that an fbclid string is authentic, not truncated, and contains valid characters.
  * Genuine Meta Click IDs are Base64/Base64url-like tokens, typically 25 to 100+ characters.
  */
-function isValidFbclid(fbclid?: string | null): boolean {
-  if (!fbclid || typeof fbclid !== 'string') return false;
-  const clean = fbclid.trim().replace(/^["']|["']$/g, '');
-  const blockedPlaceholders = [
-    'test',
-    'dummy',
-    'undefined',
-    'null',
-    'none',
-    'iwar0123456789abcdef',
-    '123456',
-    'fake',
-  ];
-  if (blockedPlaceholders.includes(clean.toLowerCase())) return false;
-  if (clean.length < 25 || clean.length > 500) return false;
-  if (!/^[a-zA-Z0-9_\-]+$/.test(clean)) return false;
-  return true;
-}
-
-/**
- * Validate and clean an fbc string against Meta's official specification:
- * Format: fb.{subdomainIndex}.{creationTimeMs}.{fbclid}
- * If a raw fbclid is provided without fbc, it can synthesize a valid fbc.
- * Omit if invalid, truncated, expired (>90 days), or future-dated.
- */
-function sanitizeAndValidateFbc(rawFbc?: string | null, rawFbclid?: string | null): string | undefined {
-  if (rawFbc && typeof rawFbc === 'string') {
-    let clean = rawFbc.trim().replace(/^["']|["']$/g, '');
-    try {
-      clean = decodeURIComponent(clean);
-    } catch {
-      // keep clean
-    }
-
-    const match = clean.match(/^fb\.([0-9]+)\.([0-9]{10,15})\.([a-zA-Z0-9_\-]+)$/);
-    if (match) {
-      const subdomainIndex = match[1];
-      const creationTimeMs = Number(match[2]);
-      const fbclid = match[3];
-
-      if (isValidFbclid(fbclid)) {
-        const now = Date.now();
-        const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
-        if (creationTimeMs <= now + 300000 && creationTimeMs >= now - ninetyDaysMs) {
-          return `fb.${subdomainIndex}.${creationTimeMs}.${fbclid}`;
-        }
-      }
-    }
-  }
-
-  // IMPORTANT: Do NOT synthesize fbc on the server using Date.now() as the timestamp.
-  // The server cannot know the original ad-click time, so any synthesized fbc will have
-  // a wrong creation timestamp — Meta detects this as a "modified fbclid value" warning.
-  // fbc synthesis is handled client-side in pixel.ts getFbcCookie() where the correct
-  // click timestamp from the URL is available. If no valid fbc arrived, omit entirely.
-
-  // Meta official requirement: if invalid or missing, omit fbc entirely!
-  return undefined;
-}
 
 async function sendCapiStandardEvent(params: {
   eventName: CapiStandardName;
@@ -293,22 +235,27 @@ async function sendCapiStandardEvent(params: {
   if (params.wilaya) userData.st = [capiHash(params.wilaya)];
   if (params.commune) userData.ct = [capiHash(params.commune)];
   if (params.externalId) userData.external_id = [capiHash(params.externalId)];
-  if (params.fbp) userData.fbp = params.fbp;
+  if (params.fbp) {
+    const validFbp = sanitizeAndValidateFbp(params.fbp);
+    if (validFbp) userData.fbp = validFbp;
+  }
   const validatedFbc = sanitizeAndValidateFbc(params.fbc);
   if (validatedFbc) userData.fbc = validatedFbc;
-  if (params.ip) userData.client_ip_address = params.ip;
-  if (params.userAgent) userData.client_user_agent = params.userAgent;
+  // IP + user agent travel as a pair, and only when the IP is a routable
+  // public address. A shared CGNAT address sent alone (or an internal/loopback
+  // one) is what makes Meta flag "client IP associated with multiple users".
+  applyClientContext(userData, { ip: params.ip, userAgent: params.userAgent });
 
   // Reporting currency defaults to USD: fbevents.js rejects DZD
   // ("Parameter 'currency' is invalid"), so browser + CAPI must agree on USD.
-  // PageView carries NO monetary fields per Meta spec (value/currency on a
-  // PageView triggers the "Send valid price data" ROAS warning); Lead and
-  // all commerce events keep them.
-  const isPageView = params.eventName === 'PageView';
+  // Events Meta treats as non-revenue carry NO monetary fields at all:
+  // PageView and Lead. A value/currency on either of them is reported back as
+  // "Send valid price data for more accurate ROAS".
+  const isValuelessEvent = params.eventName === 'PageView' || params.eventName === 'Lead';
   const metaCurrency = getMetaCurrency();
   const rawInput = Number(params.value);
   const rawValue = Number.isFinite(rawInput) && rawInput > 0 ? rawInput : 9500;
-  if (!isPageView && (!Number.isFinite(rawInput) || rawInput <= 0)) {
+  if (!isValuelessEvent && (!Number.isFinite(rawInput) || rawInput <= 0)) {
     console.warn(`[Meta CAPI] Invalid ${params.eventName} value (${String(params.value)}) — falling back to 9500 DZD input.`);
   }
   const value =
@@ -329,7 +276,7 @@ async function sendCapiStandardEvent(params: {
     content_type: 'product',
     content_category: 'eye_care_device',
   };
-  if (!isPageView) {
+  if (!isValuelessEvent) {
     customData.value = value;
     customData.currency = currency;
     customData.num_items = qty;
@@ -337,7 +284,13 @@ async function sendCapiStandardEvent(params: {
     customData.shipping_value = 0;
   }
   if (params.packageId) customData.package_id = params.packageId;
-  if (!isPageView && typeof params.discountValue === 'number') {
+  if (
+    !isValuelessEvent &&
+    typeof params.discountValue === 'number' &&
+    params.discountValue > 0
+  ) {
+    // discount_value: 0 is not a discount and reads as invalid price data
+    // next to a real value, so it is omitted instead of sent as zero.
     customData.discount_value = metaCurrency === 'DZD'
       ? params.discountValue
       : Number((params.discountValue / divisor).toFixed(2));
@@ -513,24 +466,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (resolvedCapiName && capiEventId) {
       const headerVal = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
       const queryTestCode = req.query?.test_event_code ?? req.query?.testEventCode;
-      // Cookie fallback: read from request cookies and validate fbc/fbclid strictly
+      // Cookie fallback: strict shared validation for fbc/fbp. A value Meta
+      // would read as a modified click id is dropped, never repaired.
       const cookieHeader = headerVal(req.headers['cookie']) || '';
-      let cookieFbp = cookieHeader.match(/(?:^|;\s*)_fbp=([^;]+)/)?.[1];
-      if (cookieFbp) {
-        cookieFbp = cookieFbp.trim().replace(/^["']|["']$/g, '');
-        try { cookieFbp = decodeURIComponent(cookieFbp); } catch { }
-      }
-      let rawCookieFbc = cookieHeader.match(/(?:^|;\s*)_fbc=([^;]+)/)?.[1];
-      if (rawCookieFbc) {
-        rawCookieFbc = rawCookieFbc.trim().replace(/^["']|["']$/g, '');
-        try { rawCookieFbc = decodeURIComponent(rawCookieFbc); } catch { }
-      }
+      const cookieFbp = readFbpFromCookieHeader(cookieHeader);
+      const rawCookieFbc = readFbcFromCookieHeader(cookieHeader);
       const rawFbclid = req.query?.fbclid;
       const fbclidVal =
         (Array.isArray(rawFbclid) ? rawFbclid[0] : rawFbclid) ||
         (body.fbclid ? String(body.fbclid) : undefined);
-      const validatedFbc = sanitizeAndValidateFbc((body.fbc ? String(body.fbc) : undefined) || rawCookieFbc, fbclidVal);
+      // No fbclid-based synthesis: the server cannot know the real click time,
+      // so a server-built fbc is always flagged by Meta.
+      const validatedFbc = sanitizeAndValidateFbc((body.fbc ? String(body.fbc) : undefined) || rawCookieFbc);
+      const bodyFbp = sanitizeAndValidateFbp(body.fbp ? String(body.fbp) : undefined);
       const dwellRaw = Number(body.dwellS);
+      if (fbclidVal && !validatedFbc) {
+        console.warn(
+          `[Meta CAPI] ${resolvedCapiName} ${capiEventId}: fbclid arrived without a usable fbc — sending without fbc instead of a server-built one.`
+        );
+      }
       // Awaited (bounded 10s inside): fire-and-forget let Vercel freeze the
       // instance mid-flight, aborting the Meta request with AbortError.
       await sendCapiStandardEvent({
@@ -567,13 +521,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         trafficSource: body.trafficSource ? String(body.trafficSource) : undefined,
         deviceType: body.deviceType ? String(body.deviceType) : undefined,
         dwellS: Number.isFinite(dwellRaw) && dwellRaw >= 0 ? Math.min(86400, Math.floor(dwellRaw)) : undefined,
-        fbp: (body.fbp ? String(body.fbp) : undefined) || cookieFbp,
+        fbp: bodyFbp || cookieFbp,
         fbc: validatedFbc,
         userAgent: headerVal(req.headers['user-agent']),
-        ip:
-          headerVal(req.headers['x-forwarded-for'])?.split(',')[0]?.trim() ||
-          headerVal(req.headers['x-real-ip']) ||
-          undefined,
+        ip: extractClientIp(req.headers as Record<string, string | string[] | undefined>),
         // Prefer the real page URL sent by the client so event_source_url is
         // identical to the browser event's URL.
         referer:

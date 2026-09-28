@@ -22,7 +22,7 @@ declare global {
   var __THEORIA_ORDERS__: any[] | undefined;
 }
 
-import { getMetaPixelId } from './_metaConfig.js';
+import { getMetaPixelId, getMetaCurrency } from './_metaConfig.js';
 const PURGED_TEST_PIXEL_IDS = ['1699977874052309', '1400263654406240', '1961559868019808'];
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -40,6 +40,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // instead of hiding it behind hasAccessToken.
   const effectivePixelId = getMetaPixelId();
   const tokenHealth = await getMetaTokenHealth(effectivePixelId);
+  // Reporting currency actually sent to Meta (USD by default). Showing DZD here
+  // while events carry USD made the dashboard misdiagnose the ROAS warning.
+  const reportingCurrency = getMetaCurrency();
 
   return res.status(200).json({
     success: true,
@@ -49,15 +52,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     hasAccessToken: Boolean(process.env.META_CONVERSIONS_API_ACCESS_TOKEN || process.env.FB_CONVERSIONS_API_TOKEN),
     tokenHealth,
     testEventCode,
-    currency: 'DZD',
+    orderCurrency: 'DZD',
+    currency: reportingCurrency,
     processedCapiCount: orders.length,
     recentEvents: orders.slice(0, 30).map((o) => ({
       id: o.eventId || `purchase_${o.orderCode}`,
       orderCode: o.orderCode,
       eventName: 'Purchase',
       status: o.capiStatus || 'sent',
-      currency: 'DZD',
+      currency: reportingCurrency,
       value: o.totalPrice || 9500,
+      valueCurrency: 'DZD',
       timestamp: o.createdAt || Date.now(),
       eventId: o.eventId || `purchase_${o.orderCode}`,
       matchScore: '9.3 / 10',
@@ -65,7 +70,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     deduplicationMechanism: {
       method: 'Shared event_id + event_name',
       eventIdPattern: 'purchase_{ORDER_CODE}',
-      currency: 'DZD',
+      currency: reportingCurrency,
       matchQualityEstimated: '9.3 / 10',
       browserReloadGuard: 'Active (localStorage & sessionStorage suppression)',
       serverReloadGuard: 'Active (fb_sent = 1 database suppression)',

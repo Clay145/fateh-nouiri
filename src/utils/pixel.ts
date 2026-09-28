@@ -20,6 +20,7 @@ declare global {
 
 const FIRED_PURCHASES_STORAGE_KEY = 'theoria_fired_purchases_cache';
 const PIXEL_EVENT_LOGS_KEY = 'theoria_pixel_event_logs';
+const FBP_STORAGE_KEY = 'theoria_fbp_fallback';
 
 /**
  * Extract _fbp (Meta browser identifier) from document cookies
@@ -28,6 +29,48 @@ export function getFbpCookie(): string | null {
   if (typeof document === 'undefined') return null;
   const match = document.cookie.match(/(^|;\s*)_fbp=([^;]+)/);
   return match ? decodeURIComponent(match[2]) : null;
+}
+
+/**
+ * Meta-format browser id: fb.1.{creationTimeMs}.{random}.
+ *
+ * Safari ITP, in-app browsers and ad blockers strip _fbp, which leaves every
+ * upper-funnel server event (ViewContent/PageView) identified by client IP
+ * alone — exactly the shape Meta reports as "client IP addresses associated
+ * with multiple users" in CGNAT markets like Algeria. This mints ONE stable id
+ * per browser and reuses it for every event.
+ *
+ * Important: this is a browser-side id, NOT an fbc. fbc embeds the ad-click
+ * time and must never be invented outside a real ?fbclid= landing.
+ */
+export function getFbp(): string {
+  if (typeof document === 'undefined') return '';
+
+  // 1. Real _fbp cookie always wins (matches the browser pixel exactly).
+  const cookie = getFbpCookie();
+  if (cookie && isValidFbp(cookie)) return cookie;
+
+  // 2. Stable per-browser fallback, persisted in localStorage.
+  try {
+    const stored = localStorage.getItem(FBP_STORAGE_KEY);
+    if (stored && isValidFbp(stored)) return stored;
+  } catch {
+    // ignore (private mode)
+  }
+
+  const minted = `fb.1.${Date.now()}.${Math.floor(Math.random() * 1e9)}`;
+  try {
+    localStorage.setItem(FBP_STORAGE_KEY, minted);
+  } catch {
+    // ignore — returned value is still used for this page
+  }
+  return minted;
+}
+
+/** Meta _fbp shape: fb.{index}.{creationTimeMs}.{random}. */
+export function isValidFbp(fbp?: string | null): boolean {
+  if (!fbp || typeof fbp !== 'string') return false;
+  return /^fb\.[0-9]+\.[0-9]{10,15}\.[a-zA-Z0-9_-]+$/.test(fbp.trim());
 }
 
 /**
@@ -196,8 +239,18 @@ export function buildMetaContents(params: {
   const units = Number(params.units);
   const qty = Number.isFinite(units) && units > 0 ? Math.min(10, Math.floor(units)) : 1;
   const price = Number(params.itemPrice);
+  // item_price: 0 is invalid price data for Meta (and breaks the
+  // quantity × item_price == value identity), so a missing/negative price
+  // never reaches the payload — callers must supply the unit price.
+  if (!Number.isFinite(price) || price <= 0) {
+    console.warn(
+      `[Meta Pixel] buildMetaContents called without a usable item_price for ${id} — contents omitted to avoid invalid price data.`
+    );
+    return { contents: [], num_items: qty };
+  }
+  const itemPrice = Number(price.toFixed(2));
   return {
-    contents: [{ id, quantity: qty, item_price: Number.isFinite(price) ? price : 0 }],
+    contents: [{ id, quantity: qty, item_price: itemPrice }],
     num_items: qty,
   };
 }
@@ -563,7 +616,6 @@ export function trackAddToCart(params?: {
     content_type: 'product',
     content_category: 'eye_care_device',
     content_ids: params?.content_ids?.length ? params.content_ids : ['theoria_eye_massager_pro'],
-    contents,
     value: metaValue,
     currency: metaCurrency,
     original_value: rawValue,
@@ -571,9 +623,11 @@ export function trackAddToCart(params?: {
     num_items,
     shipping_value: 0,
   };
+  // Empty contents is never sent: Meta rejects a contents list with no items.
+  if (contents.length) defaultParams.contents = contents;
   if (params?.packageId) defaultParams.package_id = params.packageId;
   // Reporting currency, never raw DZD next to a converted value.
-  if (typeof params?.discountValue === 'number') defaultParams.discount_value = toReportingCurrency(params.discountValue);
+  if (typeof params?.discountValue === 'number' && params.discountValue > 0) defaultParams.discount_value = toReportingCurrency(params.discountValue);
   if (params?.wilayaCode) defaultParams.wilaya_code = params.wilayaCode;
   if (params?.trafficSource) defaultParams.traffic_source = params.trafficSource;
   if (params?.deviceType) defaultParams.device_type = params.deviceType;
@@ -620,7 +674,6 @@ export function trackInitiateCheckout(params?: {
     content_type: 'product',
     content_category: 'eye_care_device',
     content_ids: params?.content_ids?.length ? params.content_ids : ['theoria_eye_massager_pro'],
-    contents,
     value: metaValue,
     currency: metaCurrency,
     original_value: rawValue,
@@ -628,9 +681,11 @@ export function trackInitiateCheckout(params?: {
     num_items,
     shipping_value: 0,
   };
+  // Empty contents is never sent: Meta rejects a contents list with no items.
+  if (contents.length) defaultParams.contents = contents;
   if (params?.packageId) defaultParams.package_id = params.packageId;
   // Reporting currency, never raw DZD next to a converted value.
-  if (typeof params?.discountValue === 'number') defaultParams.discount_value = toReportingCurrency(params.discountValue);
+  if (typeof params?.discountValue === 'number' && params.discountValue > 0) defaultParams.discount_value = toReportingCurrency(params.discountValue);
   if (params?.wilayaCode) defaultParams.wilaya_code = params.wilayaCode;
   if (params?.trafficSource) defaultParams.traffic_source = params.trafficSource;
   if (params?.deviceType) defaultParams.device_type = params.deviceType;
@@ -720,17 +775,18 @@ export function trackPurchase(params: {
     content_type: 'product',
     content_category: 'eye_care_device',
     content_ids: params.content_ids?.length ? params.content_ids : ['theoria_eye_massager_pro'],
-    contents: purchaseContents,
     num_items: purchaseNumItems,
     order_id: orderCode,
     original_value: rawPrice,
     original_currency: 'DZD',
     shipping_value: 0,
   };
+  // Empty contents is never sent: Meta rejects a contents list with no items.
+  if (purchaseContents.length) payload.contents = purchaseContents;
   if (params.packageId) payload.package_id = params.packageId;
   // Reporting currency everywhere — never raw DZD next to a converted value.
-  if (typeof params.discountValue === 'number') payload.discount_value = toReportingCurrency(params.discountValue);
-  if (typeof params.predictedLtv === 'number') payload.predicted_ltv = toReportingCurrency(params.predictedLtv);
+  if (typeof params.discountValue === 'number' && params.discountValue > 0) payload.discount_value = toReportingCurrency(params.discountValue);
+  if (typeof params.predictedLtv === 'number' && params.predictedLtv > 0) payload.predicted_ltv = toReportingCurrency(params.predictedLtv);
   if (params.wilayaCode) payload.wilaya_code = params.wilayaCode;
 
   if (testEventCode) {

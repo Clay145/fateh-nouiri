@@ -17,7 +17,7 @@ import { STORE_PACKAGES } from '../data/packages';
 import { ALGERIA_WILAYAS } from '../data/wilayas';
 import { PackageOption, PlacedOrder } from '../types';
 import { submitOrder } from '../services/orderService';
-import { generatePurchaseEventId, getFbpCookie, getFbcCookie, setAdvancedMatching } from '../utils/pixel';
+import { generatePurchaseEventId, getFbp, getFbcCookie, setAdvancedMatching } from '../utils/pixel';
 import {
   trackAddToCartClick,
   trackInitiateCheckoutView,
@@ -170,7 +170,9 @@ export const OrderSection: React.FC<OrderSectionProps> = ({ onOrderSuccess }) =>
     const generatedOrderCode = attemptKeysRef.current.orderCode;
     const generatedId = attemptKeysRef.current.id;
     const eventId = generatePurchaseEventId(generatedOrderCode);
-    const fbp = getFbpCookie();
+    const fbp = getFbp();
+    // fbc is passed through as-is (or omitted): the server must never rebuild
+    // it from an fbclid, or Meta flags the Purchase as a modified click id.
     const fbc = getFbcCookie();
 
     // Advanced Matching: attach customer keys so the thank-you Purchase

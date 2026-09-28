@@ -1,4 +1,4 @@
-import { trackAddToCart, trackInitiateCheckout, trackPurchase, trackPixelEvent, trackPageView, getFbpCookie, getFbcCookie, getMetaConversionAmount, buildMetaContents, unitPriceFor } from '../utils/pixel';
+import { trackAddToCart, trackInitiateCheckout, trackPurchase, trackPixelEvent, trackPageView, getFbp, getFbcCookie, getMetaConversionAmount, buildMetaContents, unitPriceFor } from '../utils/pixel';
 
 export type FunnelStep =
   | 'page_view'
@@ -370,8 +370,13 @@ function postEventToServer(
     deviceType: session.device,
     dwellS: Math.max(0, Math.round((Date.now() - (session.startTime || Date.now())) / 1000)),
     testEventCode: getMetaTestEventCode(),
-    fbp: getFbpCookie() || undefined,
+    // getFbp() falls back to a stable per-browser id when _fbp is blocked
+    // (Safari ITP / in-app browsers). Without it, upper-funnel server events
+    // are identified by client IP alone — the exact cause of Meta's
+    // "client IP associated with multiple users" error on shared CGNAT IPs.
+    fbp: getFbp() || undefined,
     fbc: getFbcCookie() || undefined,
+
     // Real page URL so server CAPI event_source_url is identical to the
     // browser event's URL (better matching than the Referer header fallback).
     pageUrl: window.location.href,
@@ -758,12 +763,11 @@ export function trackContentEngagement(): void {
       units: 1,
       itemPrice: unitPriceFor(vcValue, 1),
     });
-    trackPixelEvent('ViewContent', {
+    const viewContentPayload: Record<string, unknown> = {
       content_name: 'جهاز مساج واسترخاء العينين Theoria',
       content_type: 'product',
       content_category: 'eye_care_device',
       content_ids: catalogIds,
-      contents: vcContents,
       value: vcValue,
       currency: vcCurrency,
       original_value: 9500,
@@ -772,7 +776,9 @@ export function trackContentEngagement(): void {
       shipping_value: 0,
       traffic_source: session.source,
       device_type: session.device,
-    }, { eventID: vcEventId });
+    };
+    if (vcContents.length) viewContentPayload.contents = vcContents;
+    trackPixelEvent('ViewContent', viewContentPayload, { eventID: vcEventId });
     advanceStep('content_engaged', undefined, {
       eventId: vcEventId,
       metaEventName: 'ViewContent',
@@ -942,17 +948,15 @@ export function trackFormFieldFocus(fieldName: 'fullname' | 'phone' | 'wilaya' |
       if (!sessionStorage.getItem('theoria_fired_lead')) {
         const ldEventId = `ld_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
         sessionStorage.setItem('theoria_fired_lead', ldEventId);
-        const { value: ldValue, currency: ldCurrency } = getMetaConversionAmount(9500);
         const leadSession = getCurrentSession();
         trackPixelEvent('Lead', {
           content_name: 'Checkout Form Started - Theoria',
           content_type: 'product',
           content_category: 'eye_care_device',
           content_ids: ['theoria_eye_massager_pro'],
-          value: ldValue,
-          currency: ldCurrency,
-          original_value: 9500,
-          original_currency: 'DZD',
+          // No value/currency/contents: Lead is a non-revenue signal for Meta.
+          // A price on it is reported back as "Send valid price data" and
+          // pollutes the ROAS denominator.
           field_completed: fieldName,
           traffic_source: leadSession.source,
           device_type: leadSession.device,
