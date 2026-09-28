@@ -53,6 +53,7 @@ import {
 import { removeAdminToken } from '../services/orderService';
 import { FunnelAnalyticsView } from './FunnelAnalyticsView';
 import { MetaPixelDiagnosticView } from './MetaPixelDiagnosticView';
+import { SalesInquiriesView } from './SalesInquiriesView';
 
 interface AdminDashboardProps {
   onExitDashboard: () => void;
@@ -60,7 +61,7 @@ interface AdminDashboardProps {
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard, onLogout }) => {
-  const [activeTab, setActiveTab] = useState<'orders' | 'funnel' | 'meta_pixel'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'funnel' | 'meta_pixel' | 'sales_inquiries'>('orders');
   const [orders, setOrders] = useState<PlacedOrder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
@@ -693,12 +694,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
               Deduplication Active
             </span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('sales_inquiries')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer ${
+              activeTab === 'sales_inquiries'
+                ? 'bg-gradient-to-r from-cyan-500 to-sky-600 text-white shadow-[0_0_25px_rgba(6,182,212,0.4)]'
+                : 'bg-slate-850/80 text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-800'
+            }`}
+          >
+            <span className="text-base">🧠</span>
+            <span>استخبارات العملاء وكرياتيف الإعلانات (AI)</span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
+              جديد
+            </span>
+          </button>
         </div>
 
         {activeTab === 'funnel' ? (
           <FunnelAnalyticsView />
         ) : activeTab === 'meta_pixel' ? (
           <MetaPixelDiagnosticView />
+        ) : activeTab === 'sales_inquiries' ? (
+          <SalesInquiriesView />
         ) : (
           <>
             {/* KPI Cards Grid */}

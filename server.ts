@@ -22,6 +22,8 @@ import {
   isEcomConfigured,
   shipOrderToEcom,
 } from './api/_ecom';
+import { handleSalesChatRequest } from './api/_salesAgentLogic';
+import { loadInquiriesFromFile, clearInquiries } from './api/_salesInquiriesStorage';
 
 interface OrderItem {
   id: string;
@@ -1788,6 +1790,47 @@ async function startServer() {
     persistAnalytics();
     broadcastSse('ANALYTICS_UPDATED', funnelStats);
     return res.json({ success: true, stats: funnelStats });
+  });
+
+  // POST Sales AI Assistant chat
+  app.post('/api/sales-chat', async (req: Request, res: Response) => {
+    try {
+      const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+      if (messages.length === 0) {
+        return res.status(400).json({ success: false, error: 'messages array is required' });
+      }
+      const result = await handleSalesChatRequest(messages);
+      return res.json({
+        success: true,
+        reply: result.reply,
+        orderData: result.orderData,
+      });
+    } catch (err: any) {
+      console.error('[server.ts] /api/sales-chat error:', err);
+      return res.status(500).json({ success: false, error: 'Failed to process sales chat' });
+    }
+  });
+
+  // GET Sales Inquiries & Objections (Admin only)
+  app.get('/api/sales-inquiries', checkAdminAuth, (req: Request, res: Response) => {
+    try {
+      const list = loadInquiriesFromFile();
+      return res.json({ success: true, inquiries: list });
+    } catch (err: any) {
+      console.error('[server.ts] GET /api/sales-inquiries error:', err);
+      return res.status(500).json({ success: false, error: 'Failed to load inquiries' });
+    }
+  });
+
+  // POST Clear Sales Inquiries (Admin only)
+  app.post('/api/sales-inquiries/clear', checkAdminAuth, (req: Request, res: Response) => {
+    try {
+      clearInquiries();
+      return res.json({ success: true, message: 'Inquiries cleared', inquiries: [] });
+    } catch (err: any) {
+      console.error('[server.ts] POST /api/sales-inquiries/clear error:', err);
+      return res.status(500).json({ success: false, error: 'Failed to clear inquiries' });
+    }
   });
 
   // Vite middleware for development vs static in production

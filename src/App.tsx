@@ -32,6 +32,9 @@ const AdminAuthGate = lazy(() =>
 const ThankYouPage = lazy(() =>
   import('./components/ThankYouPage').then((m) => ({ default: m.ThankYouPage }))
 );
+const SalesAgentWidget = lazy(() =>
+  import('./components/SalesAgentWidget').then((m) => ({ default: m.SalesAgentWidget }))
+);
 
 export default function App() {
   const isInitialThankYou = typeof window !== 'undefined' && (
@@ -217,6 +220,11 @@ export default function App() {
 
       {/* Smart Sticky Checkout Dock */}
       <FloatingMobileBar />
+
+      {/* Luxury AI Sales Concierge Widget */}
+      <Suspense fallback={null}>
+        <SalesAgentWidget onOrderSuccess={handleOrderSuccess} />
+      </Suspense>
 
       {/* Ambient Relaxation Sound Player Modal (chunk loads only when opened) */}
       {soundModalOpen && (
