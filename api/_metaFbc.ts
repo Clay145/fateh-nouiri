@@ -82,6 +82,9 @@ export function sanitizeAndValidateFbc(rawFbc?: string | null): string | undefin
   if (creationTimeMs > now + FBC_CLOCK_SKEW_MS) return undefined;
   if (creationTimeMs < now - FBC_MAX_AGE_MS) return undefined;
 
+  // Byte-for-byte passthrough: fbclid casing is NEVER modified (no
+  // toLowerCase/trim/sanitize on the click id itself). Meta flags any
+  // server-side rewrite as "modified fbclid value in fbc".
   return `fb.${subdomainIndex}.${creationTimeMs}.${fbclid}`;
 }
 
@@ -118,17 +121,54 @@ export function readFbcFromCookieHeader(cookieHeader?: string | null): string | 
 }
 
 /**
- * First hop of x-forwarded-for / x-real-ip, or undefined. Used only to decide
- * whether to send a client_ip_address at all — the raw value never reaches CAPI
- * user_data directly (see withClientIpAndUa).
+ * Real end-user IP, never a server/proxy/host IP. Priority:
+ * CF-Connecting-IP (Cloudflare) > True-Client-IP > X-Forwarded-For
+ * (first entry) > X-Real-IP > RFC7239 Forwarded: for=.
+ * Header lookup is case-insensitive and array-safe. The result is gated by
+ * isUsableClientIp() — private/loopback/link-local/CGNAT values yield
+ * undefined so the caller omits client_ip_address entirely (Meta rule).
+ * NEVER fall back to socket.remoteAddress / host IP here.
  */
 export function extractClientIp(headers: Record<string, string | string[] | undefined>): string | undefined {
-  const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
-  const candidate =
-    first(headers['x-forwarded-for'])?.split(',')[0]?.trim() ||
-    first(headers['x-real-ip'])?.trim() ||
-    '';
-  return isUsableClientIp(candidate) ? candidate : undefined;
+  const get = (name: string): string | undefined => {
+    for (const key of Object.keys(headers || {})) {
+      if (key.toLowerCase() === name) {
+        const v = headers[key];
+        return Array.isArray(v) ? v[0] : v;
+      }
+    }
+    return undefined;
+  };
+  const firstHop = (v: string | undefined): string => (v || '').split(',')[0]?.trim() || '';
+  const forwardedFor = (): string => {
+    const raw = get('forwarded');
+    if (!raw) return '';
+    // RFC7239: Forwarded: for=1.2.3.4;proto=https, for="[2001:db8::1]:4711"
+    const m = raw.match(/for=("[^"]+"|[^;,]+)/i);
+    if (!m) return '';
+    let host = m[1].replace(/^"|"$/g, '').trim();
+    // Bracketed IPv6 literal, optionally with port: [2001:db8::1]:4711
+    const bracketed = host.match(/^\[([^\]]+)\](:\d+)?$/);
+    if (bracketed) host = bracketed[1];
+    host = host.replace(/^::ffff:/i, '');
+    // Strip :port suffix for IPv4 (1.2.3.4:5678) — never for bare IPv6.
+    const v4Port = host.match(/^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/);
+    if (v4Port) host = v4Port[1];
+    return host;
+  };
+  const candidates = [
+    get('cf-connecting-ip')?.trim(),
+    get('true-client-ip')?.trim(),
+    firstHop(get('x-forwarded-for')),
+    get('x-real-ip')?.trim(),
+    forwardedFor().trim(),
+  ].filter(Boolean) as string[];
+  for (const raw of candidates) {
+    const normalized = raw.trim().replace(/^::ffff:/i, '');
+    if (!normalized || normalized.toLowerCase() === 'unknown') continue;
+    if (isUsableClientIp(normalized)) return normalized;
+  }
+  return undefined;
 }
 
 /**

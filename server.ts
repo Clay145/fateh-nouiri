@@ -376,7 +376,13 @@ async function processMetaCapiPurchase(
   // ("Parameter 'currency' is invalid"), so browser + CAPI must agree on USD.
   const metaCurrency = getMetaCurrency();
   const effectiveCurrency = metaCurrency === 'DZD' ? 'DZD' : (metaCurrency === 'EUR' ? 'EUR' : 'USD');
-  const rawPrice = Number(order.totalPrice) || 9500;
+  // Dynamic order total: value always derives from the real checkout total.
+  // 9500 is an invalid-input guard only (with warn), never a flat price.
+  const rawStdInput = Number(order.totalPrice);
+  const rawPrice = Number.isFinite(rawStdInput) && rawStdInput > 0 ? rawStdInput : 9500;
+  if (!Number.isFinite(rawStdInput) || rawStdInput <= 0) {
+    console.warn(`[Meta CAPI] Invalid Purchase totalPrice (${String(order.totalPrice)}) for order ${order.orderCode} — falling back to 9500 DZD input.`);
+  }
   const effectiveValue = effectiveCurrency === 'USD'
     ? Number((rawPrice / 135).toFixed(2))
     : (effectiveCurrency === 'EUR' ? Number((rawPrice / 145).toFixed(2)) : rawPrice);
@@ -984,7 +990,11 @@ async function startServer() {
     // Server Purchase CAPI (v20.0) with identical event_id for deduplication.
     // Single-send enforced inside processMetaCapiPurchase (processed-set claim
     // + persisted capiStatus backstop): one order produces one server event.
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
+    // Real end-user IP only: CF-Connecting-IP > True-Client-IP >
+    // X-Forwarded-For (first hop) > X-Real-IP. Never socket.remoteAddress
+    // (server/proxy IP) — extractClientIp() returns undefined for private
+    // IPs and applyClientContext() then omits the field entirely.
+    const clientIp = extractClientIp(req.headers as Record<string, string | string[] | undefined>);
     const userAgent = req.headers['user-agent'] || '';
     const host = req.headers.host || 'theoriastore.com';
     const thankYouUrl = `https://${host}/thank-you?order_id=${encodeURIComponent(orderCode)}&token=${encodeURIComponent(fb_token)}`;
@@ -1036,7 +1046,12 @@ async function startServer() {
         pixelId: getMetaPixelId(),
         capiStatus: newOrder.capiStatus,
         testEventCode: testEventCode ? String(testEventCode).trim() : null,
-        currency: 'DZD',
+        // Reporting currency shared with the CAPI payload (USD default;
+        // DZD only when META_CURRENCY=DZD). Never hardcoded.
+        currency: (() => {
+          const m = getMetaCurrency();
+          return m === 'DZD' ? 'DZD' : m === 'EUR' ? 'EUR' : 'USD';
+        })(),
         matchQuality: '9.3 / 10',
       },
     });

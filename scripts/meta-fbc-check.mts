@@ -120,13 +120,45 @@ check('public IPv4 and IPv6 accepted', () => {
   assert.strictEqual(isUsableClientIp('::ffff:41.111.2.33'), true);
 });
 
-check('first x-forwarded-for hop wins', () => {
+check('CF-Connecting-IP wins over X-Forwarded-For', () => {
   assert.strictEqual(
-    extractClientIp({ 'x-forwarded-for': '41.111.2.33, 10.0.0.1' }),
+    extractClientIp({ 'cf-connecting-ip': '41.111.2.33', 'x-forwarded-for': '86.96.130.10' }),
     '41.111.2.33'
   );
-  assert.strictEqual(extractClientIp({ 'x-forwarded-for': '127.0.0.1' }), undefined);
-  assert.strictEqual(extractClientIp({}), undefined);
+});
+
+check('True-Client-IP beats X-Forwarded-For, X-Real-IP is last resort', () => {
+  assert.strictEqual(
+    extractClientIp({ 'true-client-ip': '41.111.2.33', 'x-forwarded-for': '86.96.130.10' }),
+    '41.111.2.33'
+  );
+  assert.strictEqual(extractClientIp({ 'x-real-ip': '41.111.2.33' }), '41.111.2.33');
+});
+
+check('header names are case-insensitive, private hops are skipped', () => {
+  assert.strictEqual(
+    extractClientIp({ 'CF-Connecting-IP': '41.111.2.33' }),
+    '41.111.2.33'
+  );
+  // Private CF value falls through to the next usable public hop.
+  assert.strictEqual(
+    extractClientIp({ 'cf-connecting-ip': '10.0.0.9', 'x-forwarded-for': '41.111.2.33, 10.0.0.1' }),
+    '41.111.2.33'
+  );
+  assert.strictEqual(extractClientIp({ 'CF-Connecting-IP': '192.168.1.5' }), undefined);
+});
+
+check('RFC7239 Forwarded header and ::ffff: prefix handled', () => {
+  assert.strictEqual(
+    extractClientIp({ forwarded: 'for=41.111.2.33;proto=https' }),
+    '41.111.2.33'
+  );
+  assert.strictEqual(extractClientIp({ 'x-forwarded-for': '::ffff:41.111.2.33' }), '41.111.2.33');
+});
+
+check('no socket/host fallback: unusable headers yield undefined', () => {
+  assert.strictEqual(extractClientIp({ 'x-forwarded-for': '10.0.0.1, 192.168.0.5' }), undefined);
+  assert.strictEqual(extractClientIp({ 'x-forwarded-for': 'unknown' }), undefined);
 });
 
 check('IP and user agent are sent only as a pair', () => {
