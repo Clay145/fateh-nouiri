@@ -152,7 +152,7 @@ export const MetaPixelDiagnosticView: React.FC = () => {
           customerName: 'فاطمة الزهراء بوعلام',
           phone: '0555123456',
           wilaya: '16 - الجزائر العاصمة',
-          totalPrice: 9500,
+          totalPrice: 6500,
         }),
       });
 

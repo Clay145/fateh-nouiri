@@ -61,7 +61,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       eventName: 'Purchase',
       status: o.capiStatus || 'sent',
       currency: reportingCurrency,
-      value: o.totalPrice || 9500,
+      value: o.totalPrice || 6500,
       valueCurrency: 'DZD',
       timestamp: o.createdAt || Date.now(),
       eventId: o.eventId || `purchase_${o.orderCode}`,

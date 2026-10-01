@@ -456,7 +456,7 @@ export const FunnelAnalyticsView: React.FC = () => {
             {dropOffAtForm} <span className="text-xs text-slate-400 font-normal">شاهدوا النموذج ولم يكتبوا</span>
           </div>
           <p className="text-xs text-slate-400 leading-relaxed">
-            الزبون وصل إلى النموذج وتردد عند رؤية السعر أو تفاصيل الباقة. تأكد من أن سعر 9,500 دج والتوصيل المجاني واضحان في الإعلان.
+            الزبون وصل إلى النموذج وتردد عند رؤية السعر أو تفاصيل الباقة. تأكد من أن سعر 6,500 دج والتوصيل المجاني واضحان في الإعلان.
           </p>
         </div>
 

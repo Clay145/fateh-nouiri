@@ -207,9 +207,9 @@ async function processMetaCapiStandardEvent(params: {
   const isValuelessEvent = params.eventName === 'PageView' || params.eventName === 'Lead';
   const metaCurrency = getMetaCurrency();
   const rawStdInput = Number(params.value);
-  const rawValue = Number.isFinite(rawStdInput) && rawStdInput > 0 ? rawStdInput : 9500;
+  const rawValue = Number.isFinite(rawStdInput) && rawStdInput > 0 ? rawStdInput : 6500;
   if (!isValuelessEvent && (!Number.isFinite(rawStdInput) || rawStdInput <= 0)) {
-    console.warn(`[Meta CAPI] Invalid ${params.eventName} value (${String(params.value)}) — falling back to 9500 DZD input.`);
+    console.warn(`[Meta CAPI] Invalid ${params.eventName} value (${String(params.value)}) — falling back to 6500 DZD input.`);
   }
   const value = metaCurrency === 'DZD'
     ? rawValue
@@ -377,11 +377,11 @@ async function processMetaCapiPurchase(
   const metaCurrency = getMetaCurrency();
   const effectiveCurrency = metaCurrency === 'DZD' ? 'DZD' : (metaCurrency === 'EUR' ? 'EUR' : 'USD');
   // Dynamic order total: value always derives from the real checkout total.
-  // 9500 is an invalid-input guard only (with warn), never a flat price.
+  // 6500 is an invalid-input guard only (with warn), never a flat price.
   const rawStdInput = Number(order.totalPrice);
-  const rawPrice = Number.isFinite(rawStdInput) && rawStdInput > 0 ? rawStdInput : 9500;
+  const rawPrice = Number.isFinite(rawStdInput) && rawStdInput > 0 ? rawStdInput : 6500;
   if (!Number.isFinite(rawStdInput) || rawStdInput <= 0) {
-    console.warn(`[Meta CAPI] Invalid Purchase totalPrice (${String(order.totalPrice)}) for order ${order.orderCode} — falling back to 9500 DZD input.`);
+    console.warn(`[Meta CAPI] Invalid Purchase totalPrice (${String(order.totalPrice)}) for order ${order.orderCode} — falling back to 6500 DZD input.`);
   }
   const effectiveValue = effectiveCurrency === 'USD'
     ? Number((rawPrice / 135).toFixed(2))
@@ -953,7 +953,7 @@ async function startServer() {
       wilaya: body.wilaya || 'غير محدد',
       commune: body.commune || '',
       packageTitle: body.packageTitle || 'جهاز مساج Theoria',
-      totalPrice: Number(body.totalPrice) || 9500,
+      totalPrice: Number(body.totalPrice) || 6500,
       contentId: body.contentId ? String(body.contentId) : undefined,
       date: body.date || new Date().toLocaleDateString('ar-DZ', { year: 'numeric', month: 'long', day: 'numeric' }),
       createdAt: Date.now(),
@@ -1187,7 +1187,7 @@ async function startServer() {
       wilaya: wilaya || '16 - الجزائر العاصمة',
       commune: 'الجزائر الوسطى',
       packageTitle: 'باقة تجريبية لاختبار البيكسل',
-      totalPrice: Number(totalPrice) || 9500,
+      totalPrice: Number(totalPrice) || 6500,
       date: new Date().toLocaleDateString('ar-DZ'),
       createdAt: Date.now(),
       status: 'جديد',
@@ -1535,7 +1535,7 @@ async function startServer() {
       processMetaCapiStandardEvent({
         eventName: resolvedMetaEventName,
         eventId: String(eventId),
-        value: Number(value) || 9500,
+        value: Number(value) || 6500,
         currency: currency ? String(currency) : undefined,
         contentName: contentName ? String(contentName) : undefined,
         contentIds: Array.isArray(contentIds) ? contentIds.map(String) : undefined,

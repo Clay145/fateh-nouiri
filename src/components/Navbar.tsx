@@ -100,7 +100,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             onClick={(e) => goOrder(e, 'شريط التنقل العلوي - اطلب الآن')}
             className="bg-[#7dd3fc] hover:bg-[#c8eaff] text-[#001f2e] px-3.5 py-2 sm:px-5 sm:py-2 rounded-full text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(125,211,252,0.3)] transition-all transform active:scale-95 flex items-center gap-1.5 cursor-pointer"
           >
-            <span>9,500 دج</span>
+            <span>6,500 دج</span>
             <ArrowLeft size={14} />
           </a>
 
@@ -128,7 +128,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             الأسئلة الشائعة
           </a>
           <a href="#order-form" onClick={(e) => goOrder(e, 'قائمة الهاتف - اطلب الآن')} className="py-2 text-sm font-bold text-[#7dd3fc] cursor-pointer">
-            اطلب الآن - 9,500 دج
+            اطلب الآن - 6,500 دج
           </a>
           <div className="pt-2 flex items-center justify-between">
             <button

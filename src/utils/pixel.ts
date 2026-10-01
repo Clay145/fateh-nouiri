@@ -523,11 +523,11 @@ export function trackPixelEvent(
  * `original_value` / `original_currency` for audit.
  * Override with VITE_META_CURRENCY (DZD/EUR/USD).
  */
-export function getMetaConversionAmount(dzdAmount: number = 9500): { value: number; currency: string } {
+export function getMetaConversionAmount(dzdAmount: number = 6500): { value: number; currency: string } {
   const raw = Number(dzdAmount);
-  const dzd = Number.isFinite(raw) && raw > 0 ? raw : 9500;
+  const dzd = Number.isFinite(raw) && raw > 0 ? raw : 6500;
   if (!Number.isFinite(raw) || raw <= 0) {
-    console.warn(`[Meta Pixel] Invalid DZD amount (${String(dzdAmount)}) — falling back to 9500.`);
+    console.warn(`[Meta Pixel] Invalid DZD amount (${String(dzdAmount)}) — falling back to 6500.`);
   }
   const metaCurrency = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_META_CURRENCY
     ? (import.meta as any).env.VITE_META_CURRENCY
@@ -605,7 +605,7 @@ export function trackAddToCart(params?: {
   ctaLabel?: string;
 }): string {
   const eventId = params?.event_id || `atc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  const rawValue = assertPositiveValue(params?.value, 9500, 'AddToCart value');
+  const rawValue = assertPositiveValue(params?.value, 6500, 'AddToCart value');
   const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(rawValue);
 
   const contentId = params?.content_ids?.length ? params.content_ids[0] : 'theoria_eye_massager_pro';
@@ -659,7 +659,7 @@ export function trackInitiateCheckout(params?: {
   deviceType?: string;
 }): string {
   const eventId = params?.event_id || `ic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  const rawValue = assertPositiveValue(params?.value, 9500, 'InitiateCheckout value');
+  const rawValue = assertPositiveValue(params?.value, 6500, 'InitiateCheckout value');
   const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(rawValue);
 
   const contentId = params?.content_ids?.length ? params.content_ids[0] : 'theoria_eye_massager_pro';
@@ -750,7 +750,7 @@ export function trackPurchase(params: {
 
   // 2. Generate canonical eventID shared with Server CAPI
   const canonicalEventId = params.event_id || generatePurchaseEventId(orderCode);
-  const rawPrice = assertPositiveValue(params.value, 9500, 'Purchase value');
+  const rawPrice = assertPositiveValue(params.value, 6500, 'Purchase value');
   const { value: metaValue, currency: metaCurrency } = getMetaConversionAmount(rawPrice);
 
   const testEventCode = params.test_event_code ||

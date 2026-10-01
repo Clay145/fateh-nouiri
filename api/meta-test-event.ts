@@ -47,7 +47,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     wilaya: wilaya || '16 - الجزائر العاصمة',
     commune: 'الجزائر الوسطى',
     packageTitle: 'باقة تجريبية لاختبار البيكسل',
-    totalPrice: Number(totalPrice) || 9500,
+    totalPrice: Number(totalPrice) || 6500,
     currency: 'DZD',
     date: new Date().toLocaleDateString('ar-DZ'),
     createdAt: Date.now(),

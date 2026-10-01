@@ -88,7 +88,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
   const [manualWilaya, setManualWilaya] = useState('16 - الجزائر العاصمة');
   const [manualCommune, setManualCommune] = useState('');
   const [manualPackage, setManualPackage] = useState('الباقة الفردية (جهاز واحد Theoria)');
-  const [manualPrice, setManualPrice] = useState('9500');
+  const [manualPrice, setManualPrice] = useState('6500');
   const [manualNotes, setManualNotes] = useState('');
   const [isAddingOrder, setIsAddingOrder] = useState(false);
 
@@ -341,7 +341,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
       wilaya: manualWilaya,
       commune: manualCommune.trim() || 'وسط المدينة',
       packageTitle: manualPackage,
-      totalPrice: parseInt(manualPrice, 10) || 9500,
+      totalPrice: parseInt(manualPrice, 10) || 6500,
       notes: manualNotes.trim() || 'طلب مدخل يدوياً من الإدارة',
     });
 
@@ -1290,9 +1290,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onExitDashboard,
                     value={manualPackage}
                     onChange={(e) => {
                       setManualPackage(e.target.value);
-                      if (e.target.value.includes('جهاز واحد')) setManualPrice('9500');
-                      else if (e.target.value.includes('جهازين')) setManualPrice('16900');
-                      else setManualPrice('23500');
+                      if (e.target.value.includes('جهاز واحد')) setManualPrice('6500');
+                      else if (e.target.value.includes('جهازين')) setManualPrice('11500');
+                      else setManualPrice('15900');
                     }}
                     className="w-full px-3 py-2.5 bg-[#090d16] border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-[#7dd3fc]"
                   >

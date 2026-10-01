@@ -500,10 +500,10 @@ export const SalesAgentWidget: React.FC<SalesAgentWidgetProps> = ({ onOrderSucce
                           <span>المبلغ الإجمالي:</span>
                           <span>
                             {(msg.orderData.packageId === 'double'
-                              ? 17500
+                              ? 11500
                               : msg.orderData.packageId === 'triple'
-                              ? 24900
-                              : 9500
+                              ? 15900
+                              : 6500
                             ).toLocaleString('ar-DZ')}{' '}
                             دج
                           </span>

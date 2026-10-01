@@ -447,7 +447,7 @@ export async function submitOrder(orderData: Partial<PlacedOrder>): Promise<Plac
     wilaya: orderData.wilaya || 'غير محدد',
     commune: String(orderData.commune || '').trim(),
     packageTitle: orderData.packageTitle || 'جهاز مساج Theoria',
-    totalPrice: Number(orderData.totalPrice) || 9500,
+    totalPrice: Number(orderData.totalPrice) || 6500,
     contentId: orderData.contentId || undefined,
     currency: 'DZD',
     date: orderData.date || new Date().toLocaleDateString('ar-DZ', { year: 'numeric', month: 'long', day: 'numeric' }),

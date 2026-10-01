@@ -93,7 +93,7 @@ export const ProblemSection: React.FC = () => {
           </div>
 
           <div className="pt-2 border-t border-[#2a3a48]/20 flex items-center justify-between flex-wrap gap-2 text-xs">
-            <span className="text-white font-semibold">هل يستحق استثمار 9,500 دج لراحتك اليومية؟</span>
+            <span className="text-white font-semibold">هل يستحق استثمار 6,500 دج لراحتك اليومية؟</span>
             <a
               className="text-[#7dd3fc] font-bold hover:underline flex items-center gap-1 cursor-pointer"
               href="#order-form"

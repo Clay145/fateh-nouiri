@@ -271,7 +271,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       wilaya: body.wilaya || 'غير محدد',
       commune: String(body.commune || '').trim(),
       packageTitle: body.packageTitle || 'جهاز مساج Theoria',
-      totalPrice: Number(body.totalPrice) || 9500,
+      totalPrice: Number(body.totalPrice) || 6500,
       contentId: body.contentId ? String(body.contentId) : undefined,
       currency: 'DZD',
       date: body.date || new Date().toLocaleDateString('ar-DZ', { year: 'numeric', month: 'long', day: 'numeric' }),
@@ -361,9 +361,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const metaCurrency = orderMetaCurrency;
         const effectiveCurrency = orderEffectiveCurrency;
         const rawTotal = Number(newOrder.totalPrice);
-        const safeTotalDzd = Number.isFinite(rawTotal) && rawTotal > 0 ? rawTotal : 9500;
+        const safeTotalDzd = Number.isFinite(rawTotal) && rawTotal > 0 ? rawTotal : 6500;
         if (!Number.isFinite(rawTotal) || rawTotal <= 0) {
-          console.warn(`[Meta CAPI] Invalid Purchase totalPrice (${String((newOrder as Record<string, unknown>).totalPrice)}) for order ${orderCode} — falling back to 9500 DZD input.`);
+          console.warn(`[Meta CAPI] Invalid Purchase totalPrice (${String((newOrder as Record<string, unknown>).totalPrice)}) for order ${orderCode} — falling back to 6500 DZD input.`);
         }
         const effectiveValue = effectiveCurrency === 'USD'
           ? Number((safeTotalDzd / 135).toFixed(2))

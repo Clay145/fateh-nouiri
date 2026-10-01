@@ -68,10 +68,10 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
           <div className="w-full p-4 rounded-2xl bg-[#141c2e]/70 border border-[#7dd3fc]/20 backdrop-blur-xl flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center flex-wrap gap-3">
               <div className="flex items-baseline gap-2">
-                <span className="text-2xl sm:text-3xl font-black text-[#7dd3fc]">9,500 دج</span>
+                <span className="text-2xl sm:text-3xl font-black text-[#7dd3fc]">6,500 دج</span>
                 <span className="text-sm text-[#a0b4c4] line-through opacity-70">14,900 دج</span>
               </div>
-              <span className="px-2 py-0.5 text-xs font-bold rounded bg-[#3d2060] text-[#e8d0ff]">وفر 36%</span>
+              <span className="px-2 py-0.5 text-xs font-bold rounded bg-[#3d2060] text-[#e8d0ff]">وفر 56%</span>
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#7dd3fc]/20 text-[#7dd3fc] text-xs font-bold border border-[#7dd3fc]/30 shadow-[0_0_15px_rgba(125,211,252,0.3)]">
                 <Truck size={14} />
                 <span>+ توصيل مجاني 0 دج (وفرت 800 دج)</span>

@@ -749,7 +749,7 @@ export function trackContentEngagement(): void {
     sessionStorage.setItem('theoria_tracked_eng', 'true');
     const vcEventId = `vc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     // Same converted value/currency as CAPI so browser + server match on more than event_id.
-    const { value: vcValue, currency: vcCurrency } = getMetaConversionAmount(9500);
+    const { value: vcValue, currency: vcCurrency } = getMetaConversionAmount(6500);
     const session = getCurrentSession();
     const catalogIds = [
       'theoria_eye_massager_single',
@@ -770,7 +770,7 @@ export function trackContentEngagement(): void {
       content_ids: catalogIds,
       value: vcValue,
       currency: vcCurrency,
-      original_value: 9500,
+      original_value: 6500,
       original_currency: 'DZD',
       num_items: vcNumItems,
       shipping_value: 0,
@@ -782,7 +782,7 @@ export function trackContentEngagement(): void {
     advanceStep('content_engaged', undefined, {
       eventId: vcEventId,
       metaEventName: 'ViewContent',
-      value: 9500,
+      value: 6500,
       currency: 'DZD',
       contentName: 'جهاز مساج واسترخاء العينين Theoria',
       contentIds: catalogIds,
@@ -814,7 +814,7 @@ export function trackAddToCartClick(
   if (!sessionStorage.getItem('theoria_fired_atc')) {
     const atcEventId = `atc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     sessionStorage.setItem('theoria_fired_atc', atcEventId);
-    const rawValue = value || 9500;
+    const rawValue = value || 6500;
     const session = getCurrentSession();
     trackAddToCart({
       content_name: packageName || 'جهاز مساج Theoria Pro',
@@ -872,7 +872,7 @@ export function trackInitiateCheckoutView(
   if (!sessionStorage.getItem('theoria_tracked_checkout')) {
     sessionStorage.setItem('theoria_tracked_checkout', 'true');
     const icEventId = `ic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const rawValue = value || 9500;
+    const rawValue = value || 6500;
     const session = getCurrentSession();
     trackInitiateCheckout({
       content_name: opts?.packageName || 'جهاز مساج Theoria Pro',
@@ -965,7 +965,7 @@ export function trackFormFieldFocus(fieldName: 'fullname' | 'phone' | 'wilaya' |
           fieldName,
           eventId: ldEventId,
           metaEventName: 'Lead',
-          value: 9500,
+          value: 6500,
           currency: 'DZD',
           contentName: 'Checkout Form Started - Theoria',
           contentIds: ['theoria_eye_massager_pro'],
@@ -1018,7 +1018,7 @@ export function trackPurchaseSuccess(
   eventId?: string
 ): void {
   const orderId = typeof param1 === 'string' ? param1 : String(param2);
-  const amount = typeof param1 === 'number' ? param1 : (typeof param2 === 'number' ? param2 : 9500);
+  const amount = typeof param1 === 'number' ? param1 : (typeof param2 === 'number' ? param2 : 6500);
 
   if (typeof window === 'undefined') return;
   const didFire = trackPurchase({

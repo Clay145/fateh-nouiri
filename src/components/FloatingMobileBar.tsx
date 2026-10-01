@@ -19,7 +19,7 @@ function readPackagePrice(): { price: number; name: string } {
   } catch {
     // ignore
   }
-  return { price: 9500, name: 'جهاز واحد' };
+  return { price: 6500, name: 'جهاز واحد' };
 }
 
 function readFormValidity(): boolean {

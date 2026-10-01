@@ -123,7 +123,7 @@ export const ThankYouPage: React.FC = () => {
                 order_id: localOrder.orderCode || order_id,
                 event_id: localOrder.fb_event_id || `purchase_${order_id}`,
                 fb_sent: localOrder.fb_sent ?? 0,
-                value: localOrder.totalPrice || 9500,
+                value: localOrder.totalPrice || 6500,
                 currency: 'DZD',
                 customerName: localOrder.customerName || 'زبون Theoria',
                 wilaya: localOrder.wilaya || '',
@@ -139,7 +139,7 @@ export const ThankYouPage: React.FC = () => {
               order_id,
               event_id: `purchase_${order_id}`,
               fb_sent: 0,
-              value: 9500,
+              value: 6500,
               currency: 'DZD',
               customerName: 'زبون Theoria',
               wilaya: '',
@@ -168,7 +168,7 @@ export const ThankYouPage: React.FC = () => {
         if (data.valid) {
           const ORDER_ID = data.order_id || order_id;
           const EVENT_ID = data.event_id || `purchase_${ORDER_ID}`;
-          const ORDER_VALUE = data.value || 9500;
+          const ORDER_VALUE = data.value || 6500;
           const effectiveTestEventCode =
             data.test_event_code ||
             params.get('test_event_code') ||

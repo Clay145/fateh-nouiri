@@ -254,9 +254,9 @@ async function sendCapiStandardEvent(params: {
   const isValuelessEvent = params.eventName === 'PageView' || params.eventName === 'Lead';
   const metaCurrency = getMetaCurrency();
   const rawInput = Number(params.value);
-  const rawValue = Number.isFinite(rawInput) && rawInput > 0 ? rawInput : 9500;
+  const rawValue = Number.isFinite(rawInput) && rawInput > 0 ? rawInput : 6500;
   if (!isValuelessEvent && (!Number.isFinite(rawInput) || rawInput <= 0)) {
-    console.warn(`[Meta CAPI] Invalid ${params.eventName} value (${String(params.value)}) — falling back to 9500 DZD input.`);
+    console.warn(`[Meta CAPI] Invalid ${params.eventName} value (${String(params.value)}) — falling back to 6500 DZD input.`);
   }
   const value =
     metaCurrency === 'DZD' ? rawValue : Number((rawValue / (metaCurrency === 'EUR' ? 145 : 135)).toFixed(2));
@@ -490,7 +490,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await sendCapiStandardEvent({
         eventName: resolvedCapiName,
         eventId: capiEventId,
-        value: Number(body.value ?? body.totalPrice) || 9500,
+        value: Number(body.value ?? body.totalPrice) || 6500,
         currency: body.currency ? String(body.currency) : undefined,
         contentName: body.contentName
           ? String(body.contentName)
